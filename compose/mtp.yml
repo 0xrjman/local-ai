@@ -17,7 +17,7 @@
 #
 # Env overrides:
 #   MODEL_DIR         weights root            (default: ../models)
-#   MODEL_ALIAS       served model name       (default: qwen3.6)
+#   MODEL_ALIAS       served model name       (default: local)
 #   MAX_MODEL_LEN     context length          (default: 219200)
 #   GPU_MEMORY_UTIL   VRAM fraction           (default: 0.94)
 #   SPEC_N_MAX        MTP draft tokens        (default: 3)
@@ -72,7 +72,7 @@ services:
       - --model
       - /root/.cache/huggingface/qwen3.6-27b-nvfp4-mtp
       - --served-model-name
-      - ${MODEL_ALIAS:-qwen3.6}
+      - ${MODEL_ALIAS:-local}
       - --quantization
       - compressed-tensors
       - --dtype

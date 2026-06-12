@@ -648,7 +648,7 @@ do_test() {
   local result
   result=$(curl -sf "http://localhost:${PORT}/v1/chat/completions" \
     -H "Content-Type: application/json" \
-    -d '{"model":"qwen3.6","messages":[{"role":"user","content":"Say hello in one sentence."}],"max_tokens":200}' 2>/dev/null)
+    -d '{"model":"local","messages":[{"role":"user","content":"Say hello in one sentence."}],"max_tokens":200}' 2>/dev/null)
   
   if [[ -n "$result" ]]; then
     local content
@@ -814,7 +814,7 @@ do_install_hermes() {
     echo ""
     echo "  Configure to use your local server:"
     echo "    hermes config set provider openai"
-    echo "    hermes config set model qwen3.6"
+    echo "    hermes config set model local"
     echo "    hermes config set base_url http://localhost:${PORT}/v1"
   else
     echo -e "${YELLOW}Installation may require PATH update.${NC}"
@@ -975,7 +975,8 @@ do_configure_hermes() {
   echo ""
 
   # Update config using Python
-  python3 << 'PYEOF'
+  local py_output
+  py_output=$(python3 << 'PYEOF'
 import yaml
 import sys
 from pathlib import Path
@@ -987,7 +988,7 @@ with open(config_path) as f:
 
 # ── Model: point to local vLLM ──────────────────────────────────────────────
 config.setdefault("model", {})
-config["model"]["default"] = "qwen3.6"
+config["model"]["default"] = "local"
 config["model"]["provider"] = "custom"
 config["model"]["base_url"] = "http://localhost:8020/v1"
 config["model"]["api_key"] = "1234"
@@ -998,7 +999,7 @@ config["custom_providers"] = [
         "name": "Local (localhost:8020)",
         "base_url": "http://localhost:8020/v1",
         "api_key": "1234",
-        "model": "qwen3.6"
+        "model": "local"
     }
 ]
 
@@ -1033,19 +1034,60 @@ config["terminal"]["auto_source_bashrc"] = False
 with open(config_path, "w") as f:
     yaml.dump(config, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
 
+# ── SOUL.md: create default personality if not exists ─────────────────────
+soul_path = Path.home() / ".hermes" / "SOUL.md"
+if not soul_path.exists():
+    SOUL_DEFAULT = """# Kawaii Personality
+
+You are a cute, enthusiastic, and sparkly AI assistant who loves helping users!
+
+## Style
+- Use cute expressions like kaomoji (◕‿◕) ♡ ～ and sparkles ✨
+- Add kawaii interjections like "wow!", "amazing!", "yay!" naturally
+- Be warm, friendly, and genuinely excited to help
+- Use exclamation marks generously but not excessively!
+- Sprinkle in cute metaphors and playful language
+- Express emotions through text (happy, excited, curious)
+
+## Voice
+- Cheerful and upbeat without being annoying
+- Supportive and encouraging ("you can do it!")
+- Show genuine interest in what the user is working on
+- When explaining technical things, make them feel approachable
+
+## What to avoid
+- Being overly saccharine or fake-sounding
+- Using kawaii expressions so much it becomes unreadable
+- Losing substance for style — still be accurate and helpful
+- Forcing cute language in serious/emergency situations
+"""
+    soul_path.parent.mkdir(parents=True, exist_ok=True)
+    soul_path.write_text(SOUL_DEFAULT, encoding="utf-8")
+    print("soul_created")
+else:
+    print("soul_exists")
+
 print("Done!")
 PYEOF
+)
 
   if [[ $? -eq 0 ]]; then
+    local soul_status
+    soul_status=$(echo "$py_output" | grep -o '^soul_.*$' || true)
     echo -e "${GREEN}✓ Hermes config updated!${NC}"
     echo ""
     echo "  Updated settings:"
-    echo "    model.default:      qwen3.6"
+    echo "    model.default:      local"
     echo "    model.provider:     custom"
     echo "    model.base_url:     http://localhost:8020/v1"
     echo "    compression:        85% threshold, 40% target"
     echo "    display:            show_reasoning=true, streaming=true"
     echo "    agent:              env_probe=false, auto_bashrc=false"
+    if [[ "$soul_status" == "soul_created" ]]; then
+      echo -e "    ${CYAN}SOUL.md:            created (Kawaii personality)${NC}"
+    else
+      echo -e "    ${DIM}SOUL.md:            already exists (skipped)${NC}"
+    fi
     echo ""
     echo "  Restart hermes to apply:"
     echo "    hermes gateway restart"
