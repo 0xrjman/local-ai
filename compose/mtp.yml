@@ -84,7 +84,7 @@ services:
       - --gpu-memory-utilization
       - "${GPU_MEMORY_UTIL:-0.94}"
       - --max-num-seqs
-      - "${MAX_NUM_SEQS:-4}"
+      - "${MAX_NUM_SEQS:-2}"
       - --max-num-batched-tokens
       - "${MAX_NUM_BATCHED:-4096}"
       - --kv-cache-dtype
