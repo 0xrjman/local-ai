@@ -43,6 +43,10 @@ services:
       - NVIDIA_VISIBLE_DEVICES=${GPU_DEVICE:-0}
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
       - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - VLLM_BUILD_COMMIT=
+      - VLLM_BUILD_PIPELINE=
+      - VLLM_BUILD_URL=
+      - VLLM_IMAGE_TAG=
       - VLLM_NO_USAGE_STATS=1
       - OMP_NUM_THREADS=1
       - PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True,max_split_size_mb:512}
