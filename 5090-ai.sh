@@ -23,31 +23,30 @@ while [ -L "$SCRIPT_SOURCE" ]; do
 done
 ROOT_DIR="$(cd -P "$(dirname "$SCRIPT_SOURCE")" && pwd)"
 
-COMPOSE_FILE="${ROOT_DIR}/compose/mtp.yml"
+COMPOSE_BIN="${COMPOSE_BIN:-docker compose}"
+PORT="${PORT:-8020}"
 
-# Engine selection (can be overridden by .env)
+# Load .env from repo directory (must happen before ENGINE/CONTAINER resolution)
+if [[ -f "${ROOT_DIR}/.env" ]]; then
+  set -a; source "${ROOT_DIR}/.env"; set +a
+fi
+
+# Engine selection (ENGINE may come from .env)
 ENGINE="${ENGINE:-vllm}"
 case "$ENGINE" in
   beellama)
     COMPOSE_FILE="${ROOT_DIR}/compose/beellama/dflash-vision.yml"
-    CONTAINER="beellama-qwen36-27b-dflash-vision"
+    CONTAINER="${CONTAINER:-beellama-qwen36-27b-dflash-vision}"
     ;;
   vllm-tq)
     COMPOSE_FILE="${ROOT_DIR}/compose/nvfp4-turboquant.yml"
-    CONTAINER="vllm-qwen36-nvfp4-tq"
+    CONTAINER="${CONTAINER:-vllm-qwen36-nvfp4-tq}"
     ;;
   vllm|*)
-    # Already set above
+    COMPOSE_FILE="${ROOT_DIR}/compose/mtp.yml"
+    CONTAINER="${CONTAINER:-vllm-qwen36-nvfp4-mtp}"
     ;;
 esac
-COMPOSE_BIN="${COMPOSE_BIN:-docker compose}"
-CONTAINER="vllm-qwen36-nvfp4-mtp"
-PORT="${PORT:-8020}"
-
-# Load .env from repo directory (symlink resolves to real path)
-if [[ -f "${ROOT_DIR}/.env" ]]; then
-  set -a; source "${ROOT_DIR}/.env"; set +a
-fi
 
 MODEL_DIR="${MODEL_DIR:-${ROOT_DIR}/models}"
 
@@ -98,23 +97,46 @@ gpu_info() {
   nvidia-smi --query-gpu=index,name,memory.used,memory.total --format=csv,noheader 2>/dev/null || echo "n/a"
 }
 
+config_label() {
+  case "$ENGINE" in
+    vllm)     echo "NVFP4+MTP" ;;
+    vllm-tq)  echo "NVFP4+TurboQuant" ;;
+    beellama) echo "DFlash Vision" ;;
+    *)        echo "$ENGINE" ;;
+  esac
+}
+
 header() {
   clear
-  echo -e "${CYAN}${BOLD}╔══════════════════════════════════════════════════╗${NC}"
-  echo -e "${CYAN}${BOLD}║${NC}  ${BOLD}5090-ai${NC}  ·  Qwen3.6 NVFP4+MTP  ·  RTX 5090  ${CYAN}${BOLD}║${NC}"
-  echo -e "${CYAN}${BOLD}╚══════════════════════════════════════════════════╝${NC}"
+  echo -e "${CYAN}${BOLD}╔══════════════════════════════════════════════════════════╗${NC}"
+  echo -e "${CYAN}${BOLD}║${NC}  ${BOLD}5090-ai${NC}  ·  $(config_label)  ·  RTX 5090  ${CYAN}${BOLD}║${NC}"
+  echo -e "${CYAN}${BOLD}╚══════════════════════════════════════════════════════════╝${NC}"
   echo ""
 }
 
 status_line() {
+  local actual_container
+  actual_container=$(docker ps --format "{{.Names}}" --filter "name=vllm" --filter "name=beellama" 2>/dev/null | head -1)
+
+  echo -e "  Config:    ${BOLD}$(config_label)${NC} (${ENGINE})"
+  echo -e "  Compose:   ${DIM}${COMPOSE_FILE}${NC}"
+  echo -e "  Container: ${DIM}${CONTAINER}${NC}"
+
   if is_running; then
     if is_ready; then
-      echo -e "  Status:  ${GREEN}* running${NC}  (model: $(get_model_name), port: ${PORT})"
+      echo -e "  Status:    ${GREEN}* running${NC}  (model: $(get_model_name), port: ${PORT})"
     else
-      echo -e "  Status:  ${YELLOW}~ starting${NC}  (port: ${PORT})"
+      echo -e "  Status:    ${YELLOW}~ starting${NC}  (port: ${PORT})"
+    fi
+    # Warn if running container differs from selected config
+    if [[ -n "$actual_container" && "$actual_container" != "$CONTAINER" ]]; then
+      echo -e "  ${RED}! Mismatch: running container '${actual_container}' != selected '${CONTAINER}'${NC}"
     fi
   else
-    echo -e "  Status:  ${DIM}o stopped${NC}"
+    echo -e "  Status:    ${DIM}o stopped${NC}"
+    if [[ -n "$actual_container" ]]; then
+      echo -e "  ${YELLOW}! Stale container found: ${actual_container}${NC}"
+    fi
   fi
   echo -e "  GPU:     $(gpu_info)"
   echo -e "  Models:  ${MODEL_DIR}"
@@ -263,6 +285,22 @@ do_up() {
 
   cd "$ROOT_DIR"
 
+  # Check if already running
+  if is_running; then
+    echo -e "${GREEN}* Already running${NC} (${CONTAINER})"
+    echo -e "  Model: $(get_model_name)  Port: ${PORT}"
+    return 0
+  fi
+
+  # Stop any stale containers from other configs
+  local stale
+  for stale in vllm-qwen36-nvfp4-mtp vllm-qwen36-nvfp4-tq beellama-qwen36-27b-dflash-vision; do
+    if [[ "$stale" != "$CONTAINER" ]] && docker inspect "$stale" >/dev/null 2>&1; then
+      echo -e "${YELLOW}Stopping stale container: ${stale}${NC}"
+      docker stop "$stale" >/dev/null 2>&1 || true
+    fi
+  done
+
   # Engine-specific setup
   case "$ENGINE" in
     beellama)
@@ -275,7 +313,21 @@ do_up() {
 }
 
 do_up_vllm() {
-  echo -e "${BLUE}> Starting vLLM NVFP4+MTP...${NC}"
+  echo -e "${BLUE}> Starting $(config_label)...${NC}"
+  echo -e "  Compose:   ${COMPOSE_FILE}"
+  echo -e "  Container: ${CONTAINER}"
+
+  # Show config summary
+  local ctx kv mtp_v vision max_seq
+  case "$ENGINE" in
+    vllm)
+      ctx="219K"; kv="fp8_e4m3"; mtp_v="n=3"; vision="no"; max_seq="${MAX_NUM_SEQS:-2}"
+      ;;
+    vllm-tq)
+      ctx="120K"; kv="turboquant_4bit_nc"; mtp_v="none"; vision="no"; max_seq="${MAX_NUM_SEQS:-6}"
+      ;;
+  esac
+  echo -e "  Context:   ${ctx} | KV: ${kv} | MTP: ${mtp_v} | Vision: ${vision} | Max seqs: ${max_seq}"
 
   # Check weights
   if [[ ! -d "${MODEL_DIR}/${WEIGHTS_SUBDIR}" ]]; then
@@ -406,7 +458,7 @@ wait_for_ready_vllm() {
 
     # Draw progress
     clear
-    echo -e "${BLUE}> Starting vLLM NVFP4+MTP...${NC}"
+    echo -e "${BLUE}> Starting $(config_label)...${NC}"
     echo ""
     
     local filled=$(( last_pct * bar_width / 100 ))
@@ -483,8 +535,12 @@ wait_for_ready_beellama() {
 do_down() {
   cd "$ROOT_DIR"
   echo -e "${YELLOW}x Stopping...${NC}"
-  $COMPOSE_BIN -f "$COMPOSE_FILE" down
-  echo -e "${GREEN}✓ Stopped${NC}"
+  if is_running; then
+    $COMPOSE_BIN -f "$COMPOSE_FILE" down 2>&1 || true
+    echo -e "${GREEN}✓ Stopped${NC}"
+  else
+    echo -e "${DIM}Already stopped${NC} (${CONTAINER})"
+  fi
 }
 
 do_status() {
@@ -541,8 +597,8 @@ do_bench() {
   echo ""
   read -rp "  Choice [1]: " bm_choice
   case "${bm_choice:-1}" in
-    2) bash "${ROOT_DIR}/scripts/bench-concurrent.sh" ;;
-    *) bash "${ROOT_DIR}/scripts/bench.sh" ;;
+    2) CONTAINER="$CONTAINER" bash "${ROOT_DIR}/scripts/bench-concurrent.sh" ;;
+    *) CONTAINER="$CONTAINER" bash "${ROOT_DIR}/scripts/bench.sh" ;;
   esac
 }
 
@@ -551,7 +607,7 @@ do_bench_concurrent() {
     echo -e "${RED}✗ Server not ready${NC}"
     return 1
   fi
-  bash "${ROOT_DIR}/scripts/bench-concurrent.sh"
+  CONTAINER="$CONTAINER" bash "${ROOT_DIR}/scripts/bench-concurrent.sh"
 }
 
 do_config() {
@@ -803,10 +859,13 @@ do_select_config() {
   echo ""
   read -rp "  Choice: " choice
 
+  local COMPOSE_FILE_OLD="$COMPOSE_FILE"
+
   case "$choice" in
     1)
       ENGINE="vllm"
       save_env "ENGINE" "vllm"
+      save_env "CONTAINER" "vllm-qwen36-nvfp4-mtp"
       COMPOSE_FILE="${ROOT_DIR}/compose/mtp.yml"
       CONTAINER="vllm-qwen36-nvfp4-mtp"
       echo ""
@@ -815,6 +874,7 @@ do_select_config() {
     2)
       ENGINE="beellama"
       save_env "ENGINE" "beellama"
+      save_env "CONTAINER" "beellama-qwen36-27b-dflash-vision"
       COMPOSE_FILE="${ROOT_DIR}/compose/beellama/dflash-vision.yml"
       CONTAINER="beellama-qwen36-27b-dflash-vision"
       echo ""
@@ -823,6 +883,7 @@ do_select_config() {
     3)
       ENGINE="vllm-tq"
       save_env "ENGINE" "vllm-tq"
+      save_env "CONTAINER" "vllm-qwen36-nvfp4-tq"
       COMPOSE_FILE="${ROOT_DIR}/compose/nvfp4-turboquant.yml"
       CONTAINER="vllm-qwen36-nvfp4-tq"
       echo ""
@@ -868,8 +929,18 @@ do_select_config() {
       ;;
   esac
 
-  echo ""
-  echo -e "  Restart server to apply: ${BOLD}./5090-ai.sh down && ./5090-ai.sh up${NC}"
+  # Auto-restart if server is running
+  if is_running; then
+    echo ""
+    echo -e "${YELLOW}Restarting server with new config...${NC}"
+    $COMPOSE_BIN -f "$COMPOSE_FILE_OLD" down 2>/dev/null || true
+    # Also stop any other known containers
+    docker stop vllm-qwen36-nvfp4-mtp vllm-qwen36-nvfp4-tq beellama-qwen36-27b-dflash-vision 2>/dev/null || true
+    do_up
+  else
+    echo ""
+    echo -e "  ${YELLOW}Start server to apply: ${BOLD}./5090-ai.sh up${NC}"
+  fi
 }
 
 
@@ -1008,8 +1079,8 @@ draw_menu() {
   local selected=$1
   local i
   local keys=("1" "2" "3" "4" "5" "6" "7" "8" "9" "a" "b" "c")
-  # Show current engine
-  echo -e "  ${DIM}Engine: ${ENGINE}${NC}"
+  # Show current config at a glance
+  echo -e "  ${DIM}Config: ${ENGINE} ($(config_label))  |  Container: ${CONTAINER}${NC}"
   echo ""
   for i in "${!MENU_ITEMS[@]}"; do
     local key_hint="${keys[$i]}"
@@ -1044,12 +1115,25 @@ fi
 # Interactive TUI with arrow keys
 selected=0
 menu_count=${#MENU_ITEMS[@]}
+need_clear=1  # 1 = full clear needed, 0 = cursor-home sufficient
+
+# Hide cursor to reduce flicker
+tput civis 2>/dev/null || true
+trap 'tput cnorm 2>/dev/null' EXIT
 
 while true; do
-  clear
+  if [[ $need_clear -eq 1 ]]; then
+    clear
+    need_clear=0
+  else
+    # Move cursor to top-left without clearing — no flicker
+    printf '\033[H'
+  fi
   header
   status_line
   draw_menu "$selected"
+  # Clear from cursor to end of screen (remove stale lines)
+  printf '\033[J'
 
   # Read single keypress (arrow keys are 3 bytes: ESC [ A/B)
   IFS= read -rsn1 key
@@ -1065,31 +1149,40 @@ while true; do
         '[B') # Down
           selected=$(( (selected + 1) % menu_count ))
           ;;
+        '') # Bare ESC - quit
+          echo -e "${DIM}Bye!${NC}"
+          exit 0
+          ;;
       esac
       ;;
     '') # Enter - execute selected action
       ${MENU_ACTIONS[$selected]}
       read -rp "  Press Enter to continue..."
+      need_clear=1
       ;;
     [1-9]) # Number keys 1-9
       selected=$((key - 1))
       ${MENU_ACTIONS[$selected]}
       read -rp "  Press Enter to continue..."
+      need_clear=1
       ;;
     a|A) # Key 'a' for 10th item (Install Hermes)
       selected=9
       ${MENU_ACTIONS[$selected]}
       read -rp "  Press Enter to continue..."
+      need_clear=1
       ;;
     b|B) # Key 'b' for 11th item (Configure Hermes)
       selected=10
       ${MENU_ACTIONS[$selected]}
       read -rp "  Press Enter to continue..."
+      need_clear=1
       ;;
     c|C) # Key 'c' for 12th item (Configure Hermes)
       selected=11
       ${MENU_ACTIONS[$selected]}
       read -rp "  Press Enter to continue..."
+      need_clear=1
       ;;
     q|Q|0) # Quit
       echo -e "${DIM}Bye!${NC}"

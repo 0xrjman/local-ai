@@ -8,7 +8,7 @@
 # KV cache:  fp8_e4m3 (Blackwell-native)
 # Vision:    no (text-only)
 # Context:   219K tokens (~224K safe ceiling)
-# Concurrency: 2 sequences
+# Concurrency: 6 sequences
 # Perf mode: interactivity
 #
 # Weights:
@@ -21,7 +21,7 @@
 #   MAX_MODEL_LEN     context length          (default: 219200)
 #   GPU_MEMORY_UTIL   VRAM fraction           (default: 0.94)
 #   SPEC_N_MAX        MTP draft tokens        (default: 3)
-#   MAX_NUM_SEQS      max concurrent          (default: 2)
+#   MAX_NUM_SEQS      max concurrent          (default: 6)
 #   PORT              host port               (default: 8020)
 #   VLLM_IMAGE        Docker image            (default: vllm/vllm-openai:v0.22.1)
 #
@@ -84,7 +84,7 @@ services:
       - --gpu-memory-utilization
       - "${GPU_MEMORY_UTIL:-0.94}"
       - --max-num-seqs
-      - "${MAX_NUM_SEQS:-2}"
+      - "${MAX_NUM_SEQS:-6}"
       - --max-num-batched-tokens
       - "${MAX_NUM_BATCHED:-4096}"
       - --kv-cache-dtype

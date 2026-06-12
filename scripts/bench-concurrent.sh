@@ -1,32 +1,33 @@
 #!/usr/bin/env bash
 #
 # Concurrent throughput benchmark for vLLM server.
-#   - Tests multiple concurrency levels (1, 2, 4, 6, 8, ...)
-#   - Measures aggregate TPS, per-request TPS, TTFT at each level
-#   - Finds throughput ceiling
+#   - Tests multiple prompt lengths (20K, 50K, 100K tokens)
+#   - Tests multiple concurrency levels per length
+#   - Measures aggregate TPS, per-request TPS, TTFT
+#   - Finds throughput ceiling per prompt length
 #
 # Env vars:
 #   URL            endpoint            (default: http://localhost:8020)
 #   MODEL          served model name   (default: qwen3.6)
-#   LEVELS         concurrency levels  (default: "1 2 4 6 8 10")
-#   RUNS           requests per level  (default: 8)
-#   WARMUPS        warmup requests     (default: 2)
-#   MAX_TOKENS     tokens per request  (default: 500)
-#   PROMPT         prompt text         (default: essay prompt)
+#   LEVELS         concurrency levels  (default: "1 2 4 6")
+#   RUNS           requests per level  (default: 4)
+#   WARMUPS        warmup requests     (default: 1)
+#   MAX_TOKENS     tokens to generate  (default: 500)
+#   PROMPT_SIZES   prompt sizes in tokens (default: "20000 50000 100000")
 #
 # Usage:
 #   bash scripts/bench-concurrent.sh
-#   LEVELS="1 2 4 8 16" RUNS=10 bash scripts/bench-concurrent.sh
+#   LEVELS="1 2 4 8" RUNS=6 bash scripts/bench-concurrent.sh
 
 set -euo pipefail
 
 URL="${URL:-http://localhost:8020}"
 MODEL="${MODEL:-qwen3.6}"
 LEVELS="${LEVELS:-1 2 4 6 8 10}"
-RUNS="${RUNS:-8}"
-WARMUPS="${WARMUPS:-2}"
+RUNS="${RUNS:-4}"
+WARMUPS="${WARMUPS:-1}"
 MAX_TOKENS="${MAX_TOKENS:-500}"
-PROMPT="${PROMPT:-Write a detailed explanation of how transformer attention mechanisms work, covering self-attention, multi-head attention, and positional encoding.}"
+PROMPT_SIZES="${PROMPT_SIZES:-20000 50000 100000}"
 
 need() {
   command -v "$1" >/dev/null 2>&1 || { echo "ERROR: '$1' not in PATH." >&2; exit 1; }
@@ -45,9 +46,10 @@ echo "  Model:       ${MODEL}"
 echo "  Levels:      ${LEVELS}"
 echo "  Requests:    ${RUNS} per level"
 echo "  Max tokens:  ${MAX_TOKENS}"
+echo "  Prompt sizes: ${PROMPT_SIZES} tokens"
 echo ""
 
-python3 - "$URL" "$MODEL" "$RUNS" "$WARMUPS" "$MAX_TOKENS" "$PROMPT" $LEVELS << 'PYEOF'
+python3 - "$URL" "$MODEL" "$RUNS" "$WARMUPS" "$MAX_TOKENS" $PROMPT_SIZES $LEVELS << 'PYEOF'
 import json, sys, time, urllib.request, statistics as s
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -56,11 +58,28 @@ MODEL = sys.argv[2]
 RUNS = int(sys.argv[3])
 WARMUPS = int(sys.argv[4])
 MAX_TOKENS = int(sys.argv[5])
-PROMPT = sys.argv[6]
-LEVELS = [int(x) for x in sys.argv[7:]]
+
+# Parse prompt sizes and levels from remaining args
+# First N args that are large numbers = prompt sizes, rest = levels
+remaining = sys.argv[6:]
+PROMPT_SIZES = []
+LEVELS = []
+for v in remaining:
+    n = int(v)
+    if n > 100:
+        PROMPT_SIZES.append(n)
+    else:
+        LEVELS.append(n)
+
+# Generate a prompt of approximately target_tokens tokens
+# ~1.3 chars per token for English text
+def make_prompt(target_tokens):
+    base = "Explain in detail how transformer attention mechanisms work, including self-attention, multi-head attention, positional encoding, and the computational complexity trade-offs. "
+    base_tokens = max(1, len(base) // 4)  # rough estimate
+    repeats = max(1, target_tokens // base_tokens)
+    return (base * repeats)[:target_tokens * 4]  # ~4 chars per token estimate
 
 def send_request(prompt, max_tokens):
-    """Send a single streaming request, return (wall_time, ttft, completion_tokens, prompt_tokens)."""
     body = json.dumps({
         "model": MODEL,
         "messages": [{"role": "user", "content": prompt}],
@@ -76,7 +95,7 @@ def send_request(prompt, max_tokens):
     ttft = None
     completion_tokens = 0
     prompt_tokens = 0
-    with urllib.request.urlopen(req, timeout=600) as r:
+    with urllib.request.urlopen(req, timeout=1200) as r:
         for line in r:
             line = line.decode("utf-8", errors="ignore").rstrip()
             if not line.startswith("data: "):
@@ -105,7 +124,6 @@ def send_request(prompt, max_tokens):
     return wall, ttft, completion_tokens, prompt_tokens
 
 def run_concurrent(n_requests, prompt, max_tokens):
-    """Run n_requests in parallel, return list of results."""
     results = []
     with ThreadPoolExecutor(max_workers=n_requests) as pool:
         futures = [pool.submit(send_request, prompt, max_tokens) for _ in range(n_requests)]
@@ -116,29 +134,24 @@ def run_concurrent(n_requests, prompt, max_tokens):
                 results.append(None)
     return results
 
-def analyze(results, label):
-    """Analyze concurrent results, return dict of metrics."""
+def analyze(results):
     ok = [r for r in results if r is not None]
     failed = len(results) - len(ok)
     if not ok:
-        return {"label": label, "failed": failed, "n": 0}
+        return {"n": 0, "failed": failed}
 
     walls = [r[0] for r in ok]
     ttfts = [r[1] for r in ok]
     toks = [r[2] for r in ok]
-    prompt_toks = [r[3] for r in ok]
 
     total_tokens = sum(toks)
-    total_time = max(walls)  # wall clock = slowest request
+    total_time = max(walls)
     aggregate_tps = total_tokens / total_time if total_time > 0 else 0
     per_request_tps = [t / w for t, w in zip(toks, walls)]
 
     return {
-        "label": label,
         "n": len(ok),
         "failed": failed,
-        "total_tokens": total_tokens,
-        "total_time": total_time,
         "aggregate_tps": aggregate_tps,
         "per_req_tps_mean": s.mean(per_request_tps),
         "per_req_tps_min": min(per_request_tps),
@@ -151,56 +164,60 @@ def analyze(results, label):
 
 # ── Warmup ──────────────────────────────────────────────────────────────────
 print("Warming up server...")
+warmup_prompt = make_prompt(500)
 for i in range(WARMUPS):
     try:
-        send_request(PROMPT, 100)
+        send_request(warmup_prompt, 100)
         print(f"  warm-{i+1}  OK")
     except Exception as e:
         print(f"  warm-{i+1}  FAIL: {e}")
 print()
 
-# ── Benchmark ───────────────────────────────────────────────────────────────
-header = f"{'Conc':>4s}  {'Reqs':>4s}  {'AggTPS':>8s}  {'ReqTPS':>8s}  {'TTFT avg':>8s}  {'TTFT p99':>8s}  {'Toks/req':>8s}  {'Fail':>4s}"
-print(header)
-print("-" * len(header))
+# ── Benchmark per prompt size ───────────────────────────────────────────────
+for psize in PROMPT_SIZES:
+    prompt = make_prompt(psize)
+    # Measure actual prompt tokens via a single request
+    try:
+        _, _, _, actual_ptok = send_request(prompt, 1)
+    except Exception:
+        actual_ptok = psize
 
-results_table = []
+    print(f"{'='*70}")
+    print(f"  PROMPT SIZE: ~{psize:,} tokens (actual: {actual_ptok:,} prompt_tokens)")
+    print(f"  Output tokens: {MAX_TOKENS}")
+    print(f"{'='*70}")
 
-for level in LEVELS:
-    t0 = time.time()
-    raw = run_concurrent(level, PROMPT, MAX_TOKENS)
-    m = analyze(raw, f"concurrency={level}")
-    results_table.append(m)
+    header = f"{'Conc':>4s}  {'Reqs':>4s}  {'AggTPS':>8s}  {'ReqTPS':>8s}  {'TTFT avg':>9s}  {'TTFT p99':>9s}  {'Out/req':>7s}  {'Fail':>4s}"
+    print(header)
+    print("-" * len(header))
 
-    if m["n"] == 0:
-        print(f"{level:>4d}  {'ALL FAILED':>4s}")
-        continue
+    best_agg = 0
+    best_level = 0
 
-    print(f"{level:>4d}  {m['n']:>4d}  {m['aggregate_tps']:>8.1f}  "
-          f"{m['per_req_tps_mean']:>8.1f}  {m['ttft_mean']*1000:>7.0f}ms  "
-          f"{m['ttft_p99']*1000:>7.0f}ms  {m['toks_mean']:>8.0f}  "
-          f"{m['failed']:>4d}")
+    for level in LEVELS:
+        raw = run_concurrent(level, prompt, MAX_TOKENS)
+        m = analyze(raw)
 
-# ── Summary ─────────────────────────────────────────────────────────────────
-print("\n=== Summary ===")
-valid = [m for m in results_table if m["n"] > 0]
-if valid:
-    best = max(valid, key=lambda m: m["aggregate_tps"])
-    print(f"  Peak aggregate TPS:  {best['aggregate_tps']:.1f} at concurrency={best['label'].split('=')[1]}")
-    print(f"  Per-request TPS:     {best['per_req_tps_mean']:.1f} (mean)")
+        if m["n"] == 0:
+            print(f"{level:>4d}  {'ALL FAILED':>4s}")
+            continue
 
-    # Find where TTFT starts degrading
-    baseline_ttft = valid[0]["ttft_mean"]
-    for m in valid[1:]:
-        if m["ttft_mean"] > baseline_ttft * 2:
-            prev = valid[valid.index(m) - 1]
-            print(f"  TTFT degrades at:    concurrency={m['label'].split('=')[1]} (2x baseline)")
-            break
+        print(f"{level:>4d}  {m['n']:>4d}  {m['aggregate_tps']:>8.1f}  "
+              f"{m['per_req_tps_mean']:>8.1f}  {m['ttft_mean']*1000:>8.0f}ms  "
+              f"{m['ttft_p99']*1000:>8.0f}ms  {m['toks_mean']:>7.0f}  "
+              f"{m['failed']:>4d}")
+
+        if m["aggregate_tps"] > best_agg:
+            best_agg = m["aggregate_tps"]
+            best_level = level
+
+    print(f"\n  Peak: {best_agg:.1f} agg_TPS at concurrency={best_level}")
+    print()
+
 PYEOF
 
 # GPU state
 if command -v nvidia-smi >/dev/null 2>&1; then
-  echo ""
   echo "=== GPU state ==="
   nvidia-smi --query-gpu=index,utilization.gpu,memory.used,memory.total,power.draw,temperature.gpu \
              --format=csv,noheader
