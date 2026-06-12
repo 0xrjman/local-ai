@@ -1,0 +1,15 @@
+# Weights & secrets
+.env
+models/*
+!models/.gitkeep
+
+# Runtime caches (populated by vLLM at boot)
+cache/triton/*
+cache/torch_compile/*
+cache/flashinfer/*
+!cache/*/.gitkeep
+
+# OS
+.DS_Store
+*.swp
+*~

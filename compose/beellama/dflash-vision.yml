@@ -1,0 +1,65 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Beellama DFlash Vision — Qwen3.6-27B Q5_K_S + DFlash spec-dec
+# ──────────────────────────────────────────────────────────────────────────────
+#
+# Engine:    beellama.cpp v0.3.1 (Anbeeld fork — DFlash + windowed KV)
+# Model:     Qwen3.6-27B Q5_K_S GGUF (Unsloth quant)
+# Drafter:   DFlash IQ4_XS (Anbeeld)
+# KV cache:  q5_0 K + q4_1 V
+# Vision:    yes (mmproj-F16)
+# Context:   262K tokens
+# Port:      8020 → 8080
+#
+# Weights:
+#   Target:  qwen3.6-27b-gguf/unsloth-q5ks/Qwen3.6-27B-Q5_K_S.gguf
+#   Draft:   qwen3.6-27b-gguf/anbeeld-dflash-iq4xs/Qwen3.6-27B-DFlash-IQ4_XS.gguf
+#   Vision:  qwen3.6-27b-gguf/mmproj-F16.gguf
+#
+# Env overrides:
+#   MODEL_DIR      weights root           (default: ../models)
+#   GGUF_FILE      target model           (default: see above)
+#   DRAFT_FILE     DFlash drafter          (default: see above)
+#   MMPROJ_FILE    vision encoder          (default: see above)
+#   CTX_SIZE       context length          (default: 262144)
+#   PORT           host port               (default: 8020)
+#   NGL            GPU layers              (default: 999)
+#   REASONING      thinking gate           (default: on)
+#
+# ──────────────────────────────────────────────────────────────────────────────
+
+services:
+  beellama-qwen36-27b-dflash-vision:
+    image: ${BEELLAMA_IMAGE:-ghcr.io/anbeeld/beellama.cpp:server-cuda13-v0.3.1}
+    container_name: "${ESTATE_CONTAINER:-beellama-qwen36-27b-dflash-vision}"
+    restart: unless-stopped
+    ports:
+      - "${ESTATE_PORT:-${PORT:-8020}}:8080"
+    volumes:
+      - "${MODEL_DIR:-../models}:/models:ro"
+    environment:
+      - CUDA_MANAGED_FORCE_DEVICE_ALLOC=1
+    command: >-
+      --host 0.0.0.0
+      --port 8080
+      --alias ${MODEL_ALIAS:-qwen3.6}
+      -m /models/${GGUF_FILE:-qwen3.6-27b-gguf/unsloth-q5ks/Qwen3.6-27B-Q5_K_S.gguf}
+      --spec-draft-model /models/${DRAFT_FILE:-qwen3.6-27b-gguf/anbeeld-dflash-iq4xs/Qwen3.6-27B-DFlash-IQ4_XS.gguf}
+      --spec-type dflash
+      --spec-dflash-cross-ctx ${CROSS_CTX:-1024}
+      -ngl ${NGL:-999}
+      --spec-draft-ngl ${NGL:-999}
+      --ctx-size ${CTX_SIZE:-262144}
+      -b ${BATCH_SIZE:-2048}
+      -ub ${UBATCH_SIZE:-512}
+      -np ${NP:-1}
+      --kv-unified
+      --cache-type-k ${KV_TYPE_K:-q5_0}
+      --cache-type-v ${KV_TYPE_V:-q4_1}
+      --flash-attn on
+      --swa-full
+      --cache-ram 0
+      --ctx-checkpoints 64
+      --checkpoint-min-step 128
+      --no-host
+      --jinja
+      --mmproj /models/${MMPROJ_FILE:-qwen3.6-27b-gguf/mmproj-F16.gguf}
