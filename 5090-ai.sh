@@ -32,6 +32,10 @@ case "$ENGINE" in
     COMPOSE_FILE="${ROOT_DIR}/compose/beellama/dflash-vision.yml"
     CONTAINER="beellama-qwen36-27b-dflash-vision"
     ;;
+  vllm-tq)
+    COMPOSE_FILE="${ROOT_DIR}/compose/nvfp4-turboquant.yml"
+    CONTAINER="vllm-qwen36-nvfp4-tq"
+    ;;
   vllm|*)
     # Already set above
     ;;
@@ -530,7 +534,24 @@ do_bench() {
     echo -e "${RED}✗ Server not ready${NC}"
     return 1
   fi
-  bash "${ROOT_DIR}/scripts/bench.sh"
+  echo ""
+  echo -e "${BOLD}Benchmark mode:${NC}"
+  echo "  1) Sequential (single request latency)"
+  echo "  2) Concurrent  (throughput ceiling)"
+  echo ""
+  read -rp "  Choice [1]: " bm_choice
+  case "${bm_choice:-1}" in
+    2) bash "${ROOT_DIR}/scripts/bench-concurrent.sh" ;;
+    *) bash "${ROOT_DIR}/scripts/bench.sh" ;;
+  esac
+}
+
+do_bench_concurrent() {
+  if ! is_ready; then
+    echo -e "${RED}✗ Server not ready${NC}"
+    return 1
+  fi
+  bash "${ROOT_DIR}/scripts/bench-concurrent.sh"
 }
 
 do_config() {
@@ -769,6 +790,13 @@ do_select_config() {
   echo -e "     Speed:    ~100 TPS | Size: ~16 GB"
   echo -e "     ${DIM}Requires: qwen3.6-27b-gguf/ (3 GGUF files)${NC}"
   echo ""
+  echo -e "  ${BOLD}3)${NC} vllm-tq  ${DIM}[NVFP4 + TurboQuant 4-bit KV]${NC}"
+  echo -e "     Model:    Qwen3.6-27B NVFP4 (sakamakismile)"
+  echo -e "     Engine:   vLLM v0.22.1"
+  echo -e "     Context:  120K | KV: turboquant_4bit_nc | Vision: no"
+  echo -e "     Concurrency: 6 | MTP: no"
+  echo -e "     ${DIM}Requires: qwen3.6-27b-nvfp4-mtp/ (HuggingFace)${NC}"
+  echo ""
   echo -e "  ─────────────────────────────────────────────────────────────"
   echo ""
   echo -e "  ${BOLD}0)${NC} Cancel"
@@ -792,6 +820,14 @@ do_select_config() {
       echo ""
       echo -e "${GREEN}✓ Switched to Beellama DFlash Vision${NC}"
       ;;
+    3)
+      ENGINE="vllm-tq"
+      save_env "ENGINE" "vllm-tq"
+      COMPOSE_FILE="${ROOT_DIR}/compose/nvfp4-turboquant.yml"
+      CONTAINER="vllm-qwen36-nvfp4-tq"
+      echo ""
+      echo -e "${GREEN}✓ Switched to vLLM NVFP4 + TurboQuant 4-bit KV${NC}"
+      ;;
     0)
       return 0
       ;;
@@ -805,6 +841,13 @@ do_select_config() {
   echo -e "  ${BOLD}Requirements:${NC}"
   case "$ENGINE" in
     vllm)
+      echo -e "  - Weights: ${MODEL_DIR}/qwen3.6-27b-nvfp4-mtp/"
+      echo -e "  - Docker:  vllm/vllm-openai:v0.22.1"
+      echo ""
+      echo -e "  ${DIM}Download:${NC}"
+      echo -e "    huggingface-cli download sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP --local-dir ${MODEL_DIR}/qwen3.6-27b-nvfp4-mtp"
+      ;;
+    vllm-tq)
       echo -e "  - Weights: ${MODEL_DIR}/qwen3.6-27b-nvfp4-mtp/"
       echo -e "  - Docker:  vllm/vllm-openai:v0.22.1"
       echo ""
@@ -989,10 +1032,11 @@ if [[ $# -gt 0 ]]; then
     status)       do_status ;;
     logs)         do_logs ;;
     bench|bench)  do_bench ;;
+    bench-concurrent|bench-c)  do_bench_concurrent ;;
     test)         do_test ;;
     model)        do_model ;;
     config)       do_config ;;
-    *)            echo "Usage: $0 {up|down|status|logs|bench|test|model|config}"; exit 1 ;;
+    *)            echo "Usage: $0 {up|down|status|logs|bench|bench-concurrent|test|model|config}"; exit 1 ;;
   esac
   exit $?
 fi
