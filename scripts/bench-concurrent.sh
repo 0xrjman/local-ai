@@ -22,7 +22,7 @@
 set -euo pipefail
 
 URL="${URL:-http://localhost:8020}"
-MODEL="${MODEL:-qwen3.6}"
+MODEL="${MODEL:-local}"
 LEVELS="${LEVELS:-1 2 4 6 8 10}"
 RUNS="${RUNS:-4}"
 WARMUPS="${WARMUPS:-1}"

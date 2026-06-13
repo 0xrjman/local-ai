@@ -1,35 +1,36 @@
 # ──────────────────────────────────────────────────────────────────────────────
-# vLLM NVFP4 + TurboQuant 4-bit KV — Qwen3.6-27B on RTX 5090
+# vLLM NVFP4+MTP — Qwen3.6-27B NVFP4 (unsloth) on RTX 5090
 # ──────────────────────────────────────────────────────────────────────────────
 #
 # Engine:    vLLM v0.23.0
-# Model:     Qwen3.6-27B NVFP4 (sakamakismile — Blackwell FP4 native)
-# MTP:       no (no speculative decoding)
-# KV cache:  turboquant_4bit_nc
-# Vision:    no (text-only)
-# Context:   120K tokens
-# Concurrency: 6 sequences
+# Model:     Qwen3.6-27B NVFP4 (unsloth — Blackwell FP4 native)
+# Drafter:   MTP n=3 (embedded MTP head, bf16)
+# KV cache:  fp8_e4m3 (Blackwell-native)
+# Vision:    yes (mmproj)
+# Context:   209K tokens (~214K safe ceiling)
+# Concurrency: 4 sequences
 # Perf mode: interactivity
 #
 # Weights:
-#   https://huggingface.co/sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP
-#   ~19 GB, expects: $MODEL_DIR/qwen3.6-27b-nvfp4-mtp/model.safetensors
+#   https://huggingface.co/unsloth/Qwen3.6-27B-NVFP4
+#   ~19 GB, expects: $MODEL_DIR/qwen3.6-27b-nvfp4-vision/model.safetensors
 #
 # Env overrides:
 #   MODEL_DIR         weights root            (default: ../models)
 #   MODEL_ALIAS       served model name       (default: local)
-#   MAX_MODEL_LEN     context length          (default: 120000)
+#   MAX_MODEL_LEN     context length          (default: 209200)
 #   GPU_MEMORY_UTIL   VRAM fraction           (default: 0.94)
-#   MAX_NUM_SEQS      max concurrent          (default: 6)
+#   SPEC_N_MAX        MTP draft tokens        (default: 3)
+#   MAX_NUM_SEQS      max concurrent          (default: 4)
 #   PORT              host port               (default: 8020)
 #   VLLM_IMAGE        Docker image            (default: vllm/vllm-openai:v0.23.0)
 #
 # ──────────────────────────────────────────────────────────────────────────────
 
 services:
-  vllm-qwen36-nvfp4-tq:
+  vllm-nvfp4-vision-mtp:
     image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.23.0}
-    container_name: "vllm-qwen36-nvfp4-tq"
+    container_name: "vllm-nvfp4-vision-mtp"
     restart: unless-stopped
     ports:
       - "${PORT:-8020}:8000"
@@ -69,25 +70,25 @@ services:
       - --port
       - "8000"
       - --model
-      - /root/.cache/huggingface/qwen3.6-27b-nvfp4-mtp
+      - /root/.cache/huggingface/qwen3.6-27b-nvfp4-vision
       - --served-model-name
       - ${MODEL_ALIAS:-local}
       - --quantization
       - compressed-tensors
       - --dtype
-      - float16
+      - bfloat16
       - --tensor-parallel-size
       - "1"
       - --max-model-len
-      - "${MAX_MODEL_LEN:-120000}"
+      - "${MAX_MODEL_LEN:-209200}"
       - --gpu-memory-utilization
       - "${GPU_MEMORY_UTIL:-0.94}"
       - --max-num-seqs
-      - "${MAX_NUM_SEQS:-6}"
+      - "${MAX_NUM_SEQS:-4}"
       - --max-num-batched-tokens
       - "${MAX_NUM_BATCHED:-4096}"
       - --kv-cache-dtype
-      - turboquant_4bit_nc
+      - fp8_e4m3
       - --trust-remote-code
       - --reasoning-parser
       - qwen3
@@ -96,7 +97,7 @@ services:
       - qwen3_coder
       - --enable-prefix-caching
       - --enable-chunked-prefill
-      - --language-model-only
-      - --skip-mm-profiling
+      - --speculative-config
+      - '{"method":"mtp","num_speculative_tokens":${SPEC_N_MAX:-3}}'
       - --performance-mode
       - interactivity

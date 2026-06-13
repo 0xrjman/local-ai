@@ -7,7 +7,7 @@
 #
 # Env vars:
 #   URL            endpoint            (default: http://localhost:8020)
-#   MODEL          served model name   (default: qwen3.6)
+#   MODEL          served model name   (default: local)
 #   CONTAINER      container name      (default: vllm-qwen36-nvfp4-mtp)
 #   RUNS           measured runs       (default: 5)
 #   WARMUPS        warmup runs         (default: 3)
@@ -21,7 +21,7 @@
 set -euo pipefail
 
 URL="${URL:-http://localhost:8020}"
-MODEL="${MODEL:-qwen3.6}"
+MODEL="${MODEL:-local}"
 CONTAINER="${CONTAINER:-vllm-qwen36-nvfp4-mtp}"
 RUNS="${RUNS:-5}"
 WARMUPS="${WARMUPS:-3}"

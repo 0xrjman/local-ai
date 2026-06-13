@@ -32,7 +32,7 @@ if [[ -f "${ROOT_DIR}/.env" ]]; then
 fi
 
 # Engine selection (ENGINE may come from .env)
-ENGINE="${ENGINE:-vllm}"
+ENGINE="${ENGINE:-nvfp4-text-mtp}"
 case "$ENGINE" in
   beellama)
     COMPOSE_FILE="${ROOT_DIR}/compose/beellama/dflash-vision.yml"
@@ -42,8 +42,12 @@ case "$ENGINE" in
     COMPOSE_FILE="${ROOT_DIR}/compose/nvfp4-turboquant.yml"
     CONTAINER="${CONTAINER:-vllm-qwen36-nvfp4-tq}"
     ;;
-  vllm|*)
-    COMPOSE_FILE="${ROOT_DIR}/compose/mtp.yml"
+  nvfp4-vision-mtp)
+    COMPOSE_FILE="${ROOT_DIR}/compose/nvfp4-vision-mtp.yml"
+    CONTAINER="${CONTAINER:-vllm-nvfp4-vision-mtp}"
+    ;;
+  nvfp4-text-mtp|*)
+    COMPOSE_FILE="${ROOT_DIR}/compose/nvfp4-text-mtp.yml"
     CONTAINER="${CONTAINER:-vllm-qwen36-nvfp4-mtp}"
     ;;
 esac
@@ -85,6 +89,8 @@ is_running() {
 }
 
 is_ready() {
+  # Must confirm our container is running AND the port responds
+  docker inspect --format '{{.State.Running}}' "$CONTAINER" 2>/dev/null | grep -q true && \
   curl -sf "http://localhost:${PORT}/v1/models" >/dev/null 2>&1
 }
 
@@ -99,10 +105,11 @@ gpu_info() {
 
 config_label() {
   case "$ENGINE" in
-    vllm)     echo "NVFP4+MTP" ;;
-    vllm-tq)  echo "NVFP4+TurboQuant" ;;
-    beellama) echo "DFlash Vision" ;;
-    *)        echo "$ENGINE" ;;
+    nvfp4-text-mtp)  echo "NVFP4+MTP (Text)" ;;
+    nvfp4-vision-mtp)  echo "NVFP4+MTP (Vision)" ;;
+    vllm-tq)         echo "NVFP4+TurboQuant" ;;
+    beellama)        echo "DFlash Vision" ;;
+    *)               echo "$ENGINE" ;;
   esac
 }
 
@@ -144,8 +151,26 @@ status_line() {
 }
 
 # ── Actions ──────────────────────────────────────────────────────────────────
-WEIGHTS_SUBDIR="qwen3.6-27b-nvfp4-mtp"
-HF_REPO="sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"
+get_weights_subdir() {
+  case "$ENGINE" in
+    nvfp4-text-mtp) echo "qwen3.6-27b-nvfp4-mtp" ;;
+    nvfp4-vision-mtp)  echo "qwen3.6-27b-nvfp4-vision" ;;
+    vllm-tq)        echo "qwen3.6-27b-nvfp4-mtp" ;;
+    beellama)       echo "qwen3.6-27b-gguf" ;;
+    *)              echo "qwen3.6-27b-nvfp4-mtp" ;;
+  esac
+}
+WEIGHTS_SUBDIR="$(get_weights_subdir)"
+get_hf_repo() {
+  case "$ENGINE" in
+    nvfp4-text-mtp) echo "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP" ;;
+    nvfp4-vision-mtp) echo "unsloth/Qwen3.6-27B-NVFP4" ;;
+    vllm-tq)        echo "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP" ;;
+    beellama)       echo "unsloth/Qwen3.6-27B-GGUF" ;;
+    *)              echo "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP" ;;
+  esac
+}
+HF_REPO="$(get_hf_repo)"
 HF_URL="https://huggingface.co/${HF_REPO}"
 
 prompt_weights() {
@@ -154,7 +179,14 @@ prompt_weights() {
   echo ""
   echo -e "  Looking for: ${BOLD}${MODEL_DIR}/${WEIGHTS_SUBDIR}/${NC}"
   echo ""
-  echo -e "  Model: ${BOLD}Qwen3.6-27B-Text-NVFP4-MTP${NC}"
+  case "$ENGINE" in
+    nvfp4-vision-mtp)
+      echo -e "  Model: ${BOLD}Qwen3.6-27B Vision NVFP4 (unsloth)${NC}"
+      ;;
+    *)
+      echo -e "  Model: ${BOLD}Qwen3.6-27B-Text-NVFP4-MTP${NC}"
+      ;;
+  esac
   echo -e "  Size:  ~19 GB (NVFP4 + MTP n=3)"
   echo -e "  Link:  ${BLUE}${HF_URL}${NC}"
   echo ""
@@ -166,11 +198,11 @@ prompt_weights() {
   echo -e "  ${BOLD}0)${NC} Cancel"
   echo ""
 
-  # Auto-detect if huggingface-cli is available
+  # Auto-detect if hf is available
   local hf_available=false
-  if command -v huggingface-cli &>/dev/null || command -v hf &>/dev/null; then
+  if command -v hf &>/dev/null; then
     hf_available=true
-    echo -e "  ${DIM}Tip: huggingface-cli detected, download is ready${NC}"
+    echo -e "  ${DIM}Tip: hf detected, download is ready${NC}"
   else
     echo -e "  ${DIM}Tip: install huggingface-hub for direct download: pip install huggingface-hub${NC}"
   fi
@@ -187,21 +219,18 @@ prompt_weights() {
         pip install --quiet huggingface-hub
       fi
       
-      local hf_cmd="huggingface-cli"
-      command -v hf &>/dev/null && hf_cmd="hf"
-      
       mkdir -p "$MODEL_DIR"
       echo -e "  Downloading ${BOLD}${HF_REPO}${NC}"
       echo -e "  To: ${MODEL_DIR}/${WEIGHTS_SUBDIR}/"
       echo ""
       echo -e "  ${DIM}Manual download (if network issues):${NC}"
-      echo -e "    ${hf_cmd} download ${HF_REPO} --local-dir ${MODEL_DIR}/${WEIGHTS_SUBDIR}"
+      echo -e "    hf download ${HF_REPO} --local-dir ${MODEL_DIR}/${WEIGHTS_SUBDIR}"
       echo -e "    ${DIM}Or use hf-mirror.com (China):${NC}"
-      echo -e "    HF_ENDPOINT=https://hf-mirror.com ${hf_cmd} download ${HF_REPO} --local-dir ${MODEL_DIR}/${WEIGHTS_SUBDIR}"
+      echo -e "    HF_ENDPOINT=https://hf-mirror.com hf download ${HF_REPO} --local-dir ${MODEL_DIR}/${WEIGHTS_SUBDIR}"
       echo ""
       
       # Run download with resume support
-      $hf_cmd download "$HF_REPO" \
+      hf download "$HF_REPO" \
         --local-dir "${MODEL_DIR}/${WEIGHTS_SUBDIR}" \
         --resume-download
       
@@ -216,8 +245,8 @@ prompt_weights() {
         echo -e "${RED}✗ Download failed. Check the output above.${NC}"
         echo ""
         echo -e "  ${BOLD}Manual download options:${NC}"
-        echo -e "  1. Direct: ${hf_cmd} download ${HF_REPO} --local-dir ${MODEL_DIR}/${WEIGHTS_SUBDIR}"
-        echo -e "  2. Mirror: HF_ENDPOINT=https://hf-mirror.com ${hf_cmd} download ${HF_REPO} --local-dir ${MODEL_DIR}/${WEIGHTS_SUBDIR}"
+        echo -e "  1. Direct: hf download ${HF_REPO} --local-dir ${MODEL_DIR}/${WEIGHTS_SUBDIR}"
+        echo -e "  2. Mirror: HF_ENDPOINT=https://hf-mirror.com hf download ${HF_REPO} --local-dir ${MODEL_DIR}/${WEIGHTS_SUBDIR}"
         echo -e "  3. Browser: https://huggingface.co/${HF_REPO}"
         return 1
       fi
@@ -294,7 +323,7 @@ do_up() {
 
   # Stop any stale containers from other configs
   local stale
-  for stale in vllm-qwen36-nvfp4-mtp vllm-qwen36-nvfp4-tq beellama-qwen36-27b-dflash-vision; do
+  for stale in vllm-qwen36-nvfp4-mtp vllm-nvfp4-vision-mtp vllm-qwen36-nvfp4-tq beellama-qwen36-27b-dflash-vision; do
     if [[ "$stale" != "$CONTAINER" ]] && docker inspect "$stale" >/dev/null 2>&1; then
       echo -e "${YELLOW}Stopping stale container: ${stale}${NC}"
       docker stop "$stale" >/dev/null 2>&1 || true
@@ -306,10 +335,35 @@ do_up() {
     beellama)
       do_up_beellama || return 1
       ;;
-    vllm|*)
+    nvfp4-text-mtp|nvfp4-vision-mtp)
       do_up_vllm || return 1
       ;;
+    vllm-tq)
+      do_up_vllm_tq || return 1
+      ;;
   esac
+}
+
+do_up_vllm_tq() {
+  echo -e "${BLUE}> Starting $(config_label)...${NC}"
+  echo -e "  Compose:   ${COMPOSE_FILE}"
+  echo -e "  Container: ${CONTAINER}"
+
+  if [[ ! -d "${MODEL_DIR}/${WEIGHTS_SUBDIR}" ]]; then
+    prompt_weights || return 1
+  fi
+
+  if [[ ! -d "${ROOT_DIR}/cache/torch_compile" ]] || [[ -z "$(ls -A "${ROOT_DIR}/cache/torch_compile" 2>/dev/null)" ]]; then
+    echo -e "  ${YELLOW}Note: First compile is slow (~2-3 min). Cached after that.${NC}"
+  fi
+
+  local compose_output
+  compose_output=$($COMPOSE_BIN -f "$COMPOSE_FILE" up -d --force-recreate 2>&1) || {
+    echo -e "${RED}✗ Failed to start container:${NC}"
+    echo "$compose_output" | sed 's/^/    /'
+    return 1
+  }
+  wait_for_ready_vllm
 }
 
 do_up_vllm() {
@@ -320,8 +374,11 @@ do_up_vllm() {
   # Show config summary
   local ctx kv mtp_v vision max_seq
   case "$ENGINE" in
-    vllm)
-      ctx="219K"; kv="fp8_e4m3"; mtp_v="n=3"; vision="no"; max_seq="${MAX_NUM_SEQS:-2}"
+    nvfp4-text-mtp)
+      ctx="219K"; kv="fp8_e4m3"; mtp_v="n=3"; vision="no"; max_seq="${MAX_NUM_SEQS:-4}"
+      ;;
+    nvfp4-vision-mtp)
+      ctx="209K"; kv="fp8_e4m3"; mtp_v="n=3"; vision="yes"; max_seq="${MAX_NUM_SEQS:-4}"
       ;;
     vllm-tq)
       ctx="120K"; kv="turboquant_4bit_nc"; mtp_v="none"; vision="no"; max_seq="${MAX_NUM_SEQS:-6}"
@@ -334,27 +391,17 @@ do_up_vllm() {
     prompt_weights || return 1
   fi
 
-  # Check and pull vLLM image if needed
-  local vllm_image
-  vllm_image=$(grep 'image:' "$COMPOSE_FILE" | head -1 | awk '{print $2}' | tr -d '"' | tr -d "'")
-  vllm_image="${vllm_image#\${VLLM_IMAGE:-}"
-  vllm_image="${vllm_image%\}}"
-  vllm_image="${vllm_image:-vllm/vllm-openai:v0.22.1}"
-  
-  if ! docker image inspect "$vllm_image" >/dev/null 2>&1; then
-    echo -e "  ${YELLOW}Downloading vLLM image: ${vllm_image}${NC}"
-    echo -e "  ${DIM}(This may take a few minutes on first run)${NC}"
-    echo ""
-    docker pull "$vllm_image"
-    echo ""
-  fi
-
   # First-time compile warning
   if [[ ! -d "${ROOT_DIR}/cache/torch_compile" ]] || [[ -z "$(ls -A "${ROOT_DIR}/cache/torch_compile" 2>/dev/null)" ]]; then
     echo -e "  ${YELLOW}Note: First compile is slow (~2-3 min). Cached after that.${NC}"
   fi
 
-  $COMPOSE_BIN -f "$COMPOSE_FILE" up -d
+  local compose_output
+  compose_output=$($COMPOSE_BIN -f "$COMPOSE_FILE" up -d --force-recreate 2>&1) || {
+    echo -e "${RED}✗ Failed to start container:${NC}"
+    echo "$compose_output" | sed 's/^/    /'
+    return 1
+  }
   wait_for_ready_vllm
 }
 
@@ -373,30 +420,20 @@ do_up_beellama() {
     echo "  - mmproj-F16.gguf"
     echo ""
     echo -e "${BOLD}Download:${NC}"
-    echo "  huggingface-cli download unsloth/Qwen3.6-27B-GGUF --include 'unsloth-q5ks/*' --local-dir ${gguf_dir}"
-    echo "  huggingface-cli download Anbeeld/Qwen3.6-27B-DFlash-GGUF --include 'anbeeld-dflash-iq4xs/*' --local-dir ${gguf_dir}"
-    echo "  huggingface-cli download unsloth/Qwen3.6-27B-GGUF --include 'mmproj-F16.gguf' --local-dir ${gguf_dir}"
+    echo "  hf download unsloth/Qwen3.6-27B-GGUF --include 'unsloth-q5ks/*' --local-dir ${gguf_dir}"
+    echo "  hf download Anbeeld/Qwen3.6-27B-DFlash-GGUF --include 'anbeeld-dflash-iq4xs/*' --local-dir ${gguf_dir}"
+    echo "  hf download unsloth/Qwen3.6-27B-GGUF --include 'mmproj-F16.gguf' --local-dir ${gguf_dir}"
     echo ""
     echo -e "  ${DIM}Or set MODEL_DIR in .env to point to existing weights${NC}"
     return 1
   fi
 
-  # Check beellama image
-  local beellama_image
-  beellama_image=$(grep 'image:' "$COMPOSE_FILE" | head -1 | awk '{print $2}' | tr -d '"' | tr -d "'")
-  beellama_image="${beellama_image#\${BEELLAMA_IMAGE:-}"
-  beellama_image="${beellama_image%\}}"
-  beellama_image="${beellama_image:-ghcr.io/anbeeld/beellama.cpp:server-cuda13-v0.3.1}"
-  
-  if ! docker image inspect "$beellama_image" >/dev/null 2>&1; then
-    echo -e "  ${YELLOW}Downloading Beellama image: ${beellama_image}${NC}"
-    echo -e "  ${DIM}(This may take a few minutes on first run)${NC}"
-    echo ""
-    docker pull "$beellama_image"
-    echo ""
-  fi
-
-  $COMPOSE_BIN -f "$COMPOSE_FILE" up -d
+  local compose_output
+  compose_output=$($COMPOSE_BIN -f "$COMPOSE_FILE" up -d --force-recreate 2>&1) || {
+    echo -e "${RED}✗ Failed to start container:${NC}"
+    echo "$compose_output" | sed 's/^/    /'
+    return 1
+  }
   wait_for_ready_beellama
 }
 
@@ -832,23 +869,30 @@ do_select_config() {
   echo ""
   echo -e "  ─────────────────────────────────────────────────────────────"
   echo ""
-  echo -e "  ${BOLD}1)${NC} vllm  ${DIM}[NVFP4 + MTP]${NC}"
+  echo -e "  ${BOLD}1)${NC} nvfp4-text-mtp  ${DIM}[NVFP4 + MTP]${NC}"
   echo -e "     Model:    Qwen3.6-27B NVFP4 (sakamakismile)"
-  echo -e "     Engine:   vLLM v0.22.1"
-  echo -e "     Context:  224K | KV: fp8_e4m3 | Vision: no"
+  echo -e "     Engine:   vLLM v0.23.0"
+  echo -e "     Context:  219K | KV: fp8_e4m3 | Vision: no"
   echo -e "     Speed:    ~92 TPS | Size: ~19 GB"
   echo -e "     ${DIM}Requires: qwen3.6-27b-nvfp4-mtp/ (HuggingFace)${NC}"
   echo ""
-  echo -e "  ${BOLD}2)${NC} beellama  ${DIM}[DFlash + Vision]${NC}"
+  echo -e "  ${BOLD}2)${NC} nvfp4-vision-mtp  ${DIM}[NVFP4 + MTP (Vision)]${NC}"
+  echo -e "     Model:    Qwen3.6-27B NVFP4 (unsloth)"
+  echo -e "     Engine:   vLLM v0.23.0"
+  echo -e "     Context:  209K | KV: fp8_e4m3 | Vision: yes"
+  echo -e "     Speed:    ~92 TPS | Size: ~19 GB"
+  echo -e "     ${DIM}Requires: qwen3.6-27b-nvfp4-vision/ (HuggingFace)${NC}"
+  echo ""
+  echo -e "  ${BOLD}3)${NC} beellama  ${DIM}[DFlash + Vision]${NC}"
   echo -e "     Model:    Qwen3.6-27B Q5_K_S GGUF (Unsloth)"
   echo -e "     Engine:   beellama.cpp v0.3.1"
   echo -e "     Context:  262K | KV: q5_0/q4_1 | Vision: yes"
   echo -e "     Speed:    ~100 TPS | Size: ~16 GB"
   echo -e "     ${DIM}Requires: qwen3.6-27b-gguf/ (3 GGUF files)${NC}"
   echo ""
-  echo -e "  ${BOLD}3)${NC} vllm-tq  ${DIM}[NVFP4 + TurboQuant 4-bit KV]${NC}"
+  echo -e "  ${BOLD}4)${NC} vllm-tq  ${DIM}[NVFP4 + TurboQuant 4-bit KV]${NC}"
   echo -e "     Model:    Qwen3.6-27B NVFP4 (sakamakismile)"
-  echo -e "     Engine:   vLLM v0.22.1"
+  echo -e "     Engine:   vLLM v0.23.0"
   echo -e "     Context:  120K | KV: turboquant_4bit_nc | Vision: no"
   echo -e "     Concurrency: 6 | MTP: no"
   echo -e "     ${DIM}Requires: qwen3.6-27b-nvfp4-mtp/ (HuggingFace)${NC}"
@@ -863,29 +907,42 @@ do_select_config() {
 
   case "$choice" in
     1)
-      ENGINE="vllm"
-      save_env "ENGINE" "vllm"
+      ENGINE="nvfp4-text-mtp"
+      save_env "ENGINE" "nvfp4-text-mtp"
       save_env "CONTAINER" "vllm-qwen36-nvfp4-mtp"
-      COMPOSE_FILE="${ROOT_DIR}/compose/mtp.yml"
+      COMPOSE_FILE="${ROOT_DIR}/compose/nvfp4-text-mtp.yml"
       CONTAINER="vllm-qwen36-nvfp4-mtp"
+      WEIGHTS_SUBDIR="$(get_weights_subdir)"
       echo ""
-      echo -e "${GREEN}✓ Switched to vLLM NVFP4+MTP${NC}"
+      echo -e "${GREEN}✓ Switched to vLLM NVFP4+MTP (Text)${NC}"
       ;;
     2)
+      ENGINE="nvfp4-vision-mtp"
+      save_env "ENGINE" "nvfp4-vision-mtp"
+      save_env "CONTAINER" "vllm-nvfp4-vision-mtp"
+      COMPOSE_FILE="${ROOT_DIR}/compose/nvfp4-vision-mtp.yml"
+      CONTAINER="vllm-nvfp4-vision-mtp"
+      WEIGHTS_SUBDIR="$(get_weights_subdir)"
+      echo ""
+      echo -e "${GREEN}✓ Switched to vLLM NVFP4+MTP (Vision)${NC}"
+      ;;
+    3)
       ENGINE="beellama"
       save_env "ENGINE" "beellama"
       save_env "CONTAINER" "beellama-qwen36-27b-dflash-vision"
       COMPOSE_FILE="${ROOT_DIR}/compose/beellama/dflash-vision.yml"
       CONTAINER="beellama-qwen36-27b-dflash-vision"
+      WEIGHTS_SUBDIR="$(get_weights_subdir)"
       echo ""
       echo -e "${GREEN}✓ Switched to Beellama DFlash Vision${NC}"
       ;;
-    3)
+    4)
       ENGINE="vllm-tq"
       save_env "ENGINE" "vllm-tq"
       save_env "CONTAINER" "vllm-qwen36-nvfp4-tq"
       COMPOSE_FILE="${ROOT_DIR}/compose/nvfp4-turboquant.yml"
       CONTAINER="vllm-qwen36-nvfp4-tq"
+      WEIGHTS_SUBDIR="$(get_weights_subdir)"
       echo ""
       echo -e "${GREEN}✓ Switched to vLLM NVFP4 + TurboQuant 4-bit KV${NC}"
       ;;
@@ -901,19 +958,19 @@ do_select_config() {
   echo ""
   echo -e "  ${BOLD}Requirements:${NC}"
   case "$ENGINE" in
-    vllm)
-      echo -e "  - Weights: ${MODEL_DIR}/qwen3.6-27b-nvfp4-mtp/"
-      echo -e "  - Docker:  vllm/vllm-openai:v0.22.1"
+    nvfp4-text-mtp|nvfp4-vision-mtp)
+      echo -e "  - Weights: ${MODEL_DIR}/${WEIGHTS_SUBDIR}/"
+      echo -e "  - Docker:  vllm/vllm-openai:v0.23.0"
       echo ""
       echo -e "  ${DIM}Download:${NC}"
-      echo -e "    huggingface-cli download sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP --local-dir ${MODEL_DIR}/qwen3.6-27b-nvfp4-mtp"
+      echo -e "    hf download ${HF_REPO} --local-dir ${MODEL_DIR}/${WEIGHTS_SUBDIR}"
       ;;
     vllm-tq)
-      echo -e "  - Weights: ${MODEL_DIR}/qwen3.6-27b-nvfp4-mtp/"
-      echo -e "  - Docker:  vllm/vllm-openai:v0.22.1"
+      echo -e "  - Weights: ${MODEL_DIR}/${WEIGHTS_SUBDIR}/"
+      echo -e "  - Docker:  vllm/vllm-openai:v0.23.0"
       echo ""
       echo -e "  ${DIM}Download:${NC}"
-      echo -e "    huggingface-cli download sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP --local-dir ${MODEL_DIR}/qwen3.6-27b-nvfp4-mtp"
+      echo -e "    hf download sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP --local-dir ${MODEL_DIR}/qwen3.6-27b-nvfp4-mtp"
       ;;
     beellama)
       echo -e "  - Weights: ${MODEL_DIR}/qwen3.6-27b-gguf/"
@@ -923,9 +980,9 @@ do_select_config() {
       echo -e "  - Docker:  ghcr.io/anbeeld/beellama.cpp:server-cuda13-v0.3.1"
       echo ""
       echo -e "  ${DIM}Download:${NC}"
-      echo -e "    huggingface-cli download unsloth/Qwen3.6-27B-GGUF --include 'unsloth-q5ks/*' --local-dir ${MODEL_DIR}/qwen3.6-27b-gguf"
-      echo -e "    huggingface-cli download Anbeeld/Qwen3.6-27B-DFlash-GGUF --include 'anbeeld-dflash-iq4xs/*' --local-dir ${MODEL_DIR}/qwen3.6-27b-gguf"
-      echo -e "    huggingface-cli download unsloth/Qwen3.6-27B-GGUF --include 'mmproj-F16.gguf' --local-dir ${MODEL_DIR}/qwen3.6-27b-gguf"
+      echo -e "    hf download unsloth/Qwen3.6-27B-GGUF --include 'unsloth-q5ks/*' --local-dir ${MODEL_DIR}/qwen3.6-27b-gguf"
+      echo -e "    hf download Anbeeld/Qwen3.6-27B-DFlash-GGUF --include 'anbeeld-dflash-iq4xs/*' --local-dir ${MODEL_DIR}/qwen3.6-27b-gguf"
+      echo -e "    hf download unsloth/Qwen3.6-27B-GGUF --include 'mmproj-F16.gguf' --local-dir ${MODEL_DIR}/qwen3.6-27b-gguf"
       ;;
   esac
 
@@ -935,7 +992,7 @@ do_select_config() {
     echo -e "${YELLOW}Restarting server with new config...${NC}"
     $COMPOSE_BIN -f "$COMPOSE_FILE_OLD" down 2>/dev/null || true
     # Also stop any other known containers
-    docker stop vllm-qwen36-nvfp4-mtp vllm-qwen36-nvfp4-tq beellama-qwen36-27b-dflash-vision 2>/dev/null || true
+    docker stop vllm-qwen36-nvfp4-mtp vllm-nvfp4-vision-mtp vllm-qwen36-nvfp4-tq beellama-qwen36-27b-dflash-vision 2>/dev/null || true
     do_up
   else
     echo ""

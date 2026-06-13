@@ -1,13 +1,13 @@
 # ──────────────────────────────────────────────────────────────────────────────
-# vLLM NVFP4 + TurboQuant 4-bit KV — Qwen3.6-27B on RTX 5090
+# vLLM NVFP4+MTP — Qwen3.6-27B on RTX 5090
 # ──────────────────────────────────────────────────────────────────────────────
 #
 # Engine:    vLLM v0.23.0
 # Model:     Qwen3.6-27B NVFP4 (sakamakismile — Blackwell FP4 native)
-# MTP:       no (no speculative decoding)
-# KV cache:  turboquant_4bit_nc
+# Drafter:   MTP n=3 (embedded MTP head, bf16)
+# KV cache:  fp8_e4m3 (Blackwell-native)
 # Vision:    no (text-only)
-# Context:   120K tokens
+# Context:   219K tokens (~224K safe ceiling)
 # Concurrency: 6 sequences
 # Perf mode: interactivity
 #
@@ -18,18 +18,19 @@
 # Env overrides:
 #   MODEL_DIR         weights root            (default: ../models)
 #   MODEL_ALIAS       served model name       (default: local)
-#   MAX_MODEL_LEN     context length          (default: 120000)
+#   MAX_MODEL_LEN     context length          (default: 219200)
 #   GPU_MEMORY_UTIL   VRAM fraction           (default: 0.94)
-#   MAX_NUM_SEQS      max concurrent          (default: 6)
+#   SPEC_N_MAX        MTP draft tokens        (default: 3)
+#   MAX_NUM_SEQS      max concurrent          (default: 4)
 #   PORT              host port               (default: 8020)
 #   VLLM_IMAGE        Docker image            (default: vllm/vllm-openai:v0.23.0)
 #
 # ──────────────────────────────────────────────────────────────────────────────
 
 services:
-  vllm-qwen36-nvfp4-tq:
+  vllm-qwen36-nvfp4-mtp:
     image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.23.0}
-    container_name: "vllm-qwen36-nvfp4-tq"
+    container_name: "vllm-qwen36-nvfp4-mtp"
     restart: unless-stopped
     ports:
       - "${PORT:-8020}:8000"
@@ -79,15 +80,15 @@ services:
       - --tensor-parallel-size
       - "1"
       - --max-model-len
-      - "${MAX_MODEL_LEN:-120000}"
+      - "${MAX_MODEL_LEN:-219200}"
       - --gpu-memory-utilization
       - "${GPU_MEMORY_UTIL:-0.94}"
       - --max-num-seqs
-      - "${MAX_NUM_SEQS:-6}"
+      - "${MAX_NUM_SEQS:-4}"
       - --max-num-batched-tokens
       - "${MAX_NUM_BATCHED:-4096}"
       - --kv-cache-dtype
-      - turboquant_4bit_nc
+      - fp8_e4m3
       - --trust-remote-code
       - --reasoning-parser
       - qwen3
@@ -96,6 +97,8 @@ services:
       - qwen3_coder
       - --enable-prefix-caching
       - --enable-chunked-prefill
+      - --speculative-config
+      - '{"method":"mtp","num_speculative_tokens":${SPEC_N_MAX:-3}}'
       - --language-model-only
       - --skip-mm-profiling
       - --performance-mode
