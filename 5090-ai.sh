@@ -265,16 +265,23 @@ prompt_weights() {
       # Specify existing directory
       echo ""
       echo -e "  Enter the path where ${BOLD}${WEIGHTS_SUBDIR}/${NC} exists"
+      echo -e "  You can enter the parent dir OR the weights dir directly"
       echo -e "  Example: /home/user/models  (contains ${WEIGHTS_SUBDIR}/ subfolder)"
       echo ""
       read -rp "  MODEL_DIR: " new_dir
       new_dir="${new_dir/#\~/$HOME}"
       
       if [[ -d "${new_dir}/${WEIGHTS_SUBDIR}" ]]; then
+        # User entered parent directory (e.g. /home/user/models)
         MODEL_DIR="$new_dir"
-        # Save to .env
         save_env "MODEL_DIR" "$MODEL_DIR"
         echo -e "${GREEN}✓ Weights found! Saved to .env${NC}"
+        return 0
+      elif [[ -f "${new_dir}/model.safetensors" || -n "$(ls "${new_dir}"/*.gguf 2>/dev/null)" ]]; then
+        # User entered the weights directory directly
+        MODEL_DIR="$(dirname "$new_dir")"
+        save_env "MODEL_DIR" "$MODEL_DIR"
+        echo -e "${GREEN}✓ Weights found! Saved MODEL_DIR=${MODEL_DIR}${NC}"
         return 0
       else
         echo -e "${RED}✗ Not found: ${new_dir}/${WEIGHTS_SUBDIR}/${NC}"
