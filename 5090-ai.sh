@@ -293,9 +293,17 @@ prompt_weights() {
         return 0
       elif [[ -f "${new_dir}/model.safetensors" || -n "$(ls "${new_dir}"/*.gguf 2>/dev/null)" ]]; then
         # User entered the weights directory directly
+        local actual_name
+        actual_name="$(basename "$new_dir")"
         MODEL_DIR="$(dirname "$new_dir")"
         save_env "MODEL_DIR" "$MODEL_DIR"
-        echo -e "${GREEN}✓ Weights found! Saved MODEL_DIR=${MODEL_DIR}${NC}"
+        # If directory name doesn't match WEIGHTS_SUBDIR, create symlink
+        if [[ "$actual_name" != "$WEIGHTS_SUBDIR" ]]; then
+          ln -sfn "$new_dir" "${MODEL_DIR}/${WEIGHTS_SUBDIR}"
+          echo -e "${GREEN}✓ Weights found! Symlinked ${WEIGHTS_SUBDIR} -> ${actual_name}${NC}"
+        else
+          echo -e "${GREEN}✓ Weights found! Saved MODEL_DIR=${MODEL_DIR}${NC}"
+        fi
         return 0
       else
         echo -e "${RED}✗ Not found: ${new_dir}/${WEIGHTS_SUBDIR}/${NC}"
