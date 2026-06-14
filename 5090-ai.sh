@@ -297,10 +297,10 @@ prompt_weights() {
         actual_name="$(basename "$new_dir")"
         MODEL_DIR="$(dirname "$new_dir")"
         save_env "MODEL_DIR" "$MODEL_DIR"
-        # If directory name doesn't match WEIGHTS_SUBDIR, create symlink
+        # If directory name doesn't match WEIGHTS_SUBDIR, rename it
         if [[ "$actual_name" != "$WEIGHTS_SUBDIR" ]]; then
-          ln -sfn "$new_dir" "${MODEL_DIR}/${WEIGHTS_SUBDIR}"
-          echo -e "${GREEN}✓ Weights found! Symlinked ${WEIGHTS_SUBDIR} -> ${actual_name}${NC}"
+          mv "$new_dir" "${MODEL_DIR}/${WEIGHTS_SUBDIR}"
+          echo -e "${GREEN}✓ Weights found! Renamed ${actual_name} -> ${WEIGHTS_SUBDIR}${NC}"
         else
           echo -e "${GREEN}✓ Weights found! Saved MODEL_DIR=${MODEL_DIR}${NC}"
         fi
