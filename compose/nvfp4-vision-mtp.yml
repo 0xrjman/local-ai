@@ -1,19 +1,19 @@
 # ──────────────────────────────────────────────────────────────────────────────
-# vLLM NVFP4+MTP — Qwen3.6-27B NVFP4 (unsloth) on RTX 5090
+# vLLM NVFP4+MTP — Qwen3.6-27B (Huihui abliterated) on RTX 5090
 # ──────────────────────────────────────────────────────────────────────────────
 #
 # Engine:    vLLM v0.23.0
-# Model:     Qwen3.6-27B NVFP4 (unsloth — Blackwell FP4 native)
+# Model:     Qwen3.6-27B NVFP4 (sakamakismile — Huihui abliterated + MTP)
 # Drafter:   MTP n=3 (embedded MTP head, bf16)
 # KV cache:  fp8_e4m3 (Blackwell-native)
-# Vision:    yes (mmproj)
+# Vision:    yes (mmproj, Qwen3.5 arch)
 # Context:   209K tokens (~214K safe ceiling)
 # Concurrency: 4 sequences
 # Perf mode: interactivity
 #
 # Weights:
-#   https://huggingface.co/unsloth/Qwen3.6-27B-NVFP4
-#   ~19 GB, expects: $MODEL_DIR/qwen3.6-27b-nvfp4-vision/model.safetensors
+#   https://huggingface.co/sakamakismile/Huihui-Qwen3.6-27B-abliterated-NVFP4-MTP
+#   ~19 GB, expects: $MODEL_DIR/huihui-qwen3.6-27b-abliterated-nvfp4-mtp/model.safetensors
 #
 # Env overrides:
 #   MODEL_DIR         weights root            (default: ../models)
@@ -70,7 +70,7 @@ services:
       - --port
       - "8000"
       - --model
-      - /root/.cache/huggingface/qwen3.6-27b-nvfp4-vision
+      - /root/.cache/huggingface/huihui-qwen3.6-27b-abliterated-nvfp4-mtp
       - --served-model-name
       - ${MODEL_ALIAS:-local}
       - --quantization

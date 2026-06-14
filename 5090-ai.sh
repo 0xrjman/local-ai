@@ -156,7 +156,7 @@ status_line() {
 get_weights_subdir() {
   case "$ENGINE" in
     nvfp4-text-mtp) echo "qwen3.6-27b-nvfp4-mtp" ;;
-    nvfp4-vision-mtp)  echo "qwen3.6-27b-nvfp4-vision" ;;
+    nvfp4-vision-mtp)  echo "huihui-qwen3.6-27b-abliterated-nvfp4-mtp" ;;
     vllm-tq)        echo "qwen3.6-27b-nvfp4-mtp" ;;
     beellama)       echo "qwen3.6-27b-gguf" ;;
     *)              echo "qwen3.6-27b-nvfp4-mtp" ;;
@@ -166,7 +166,7 @@ WEIGHTS_SUBDIR="$(get_weights_subdir)"
 get_hf_repo() {
   case "$ENGINE" in
     nvfp4-text-mtp) echo "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP" ;;
-    nvfp4-vision-mtp) echo "unsloth/Qwen3.6-27B-NVFP4" ;;
+    nvfp4-vision-mtp) echo "sakamakismile/Huihui-Qwen3.6-27B-abliterated-NVFP4-MTP" ;;
     vllm-tq)        echo "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP" ;;
     beellama)       echo "unsloth/Qwen3.6-27B-GGUF" ;;
     *)              echo "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP" ;;
@@ -183,7 +183,7 @@ prompt_weights() {
   echo ""
   case "$ENGINE" in
     nvfp4-vision-mtp)
-      echo -e "  Model: ${BOLD}Qwen3.6-27B Vision NVFP4 (unsloth)${NC}"
+      echo -e "  Model: ${BOLD}Qwen3.6-27B NVFP4 (Huihui abliterated + MTP)${NC}"
       ;;
     *)
       echo -e "  Model: ${BOLD}Qwen3.6-27B-Text-NVFP4-MTP${NC}"
@@ -200,11 +200,9 @@ prompt_weights() {
   echo -e "  ${BOLD}0)${NC} Cancel"
   echo ""
 
-  # Auto-detect if hf is available (check venv first, then PATH)
+  # Auto-detect if hf is available via PATH
   local hf_cmd=""
-  if [[ -x "${HOME}/venv/ml/bin/hf" ]]; then
-    hf_cmd="${HOME}/venv/ml/bin/hf"
-  elif command -v hf &>/dev/null; then
+  if command -v hf &>/dev/null; then
     hf_cmd="hf"
   fi
   local hf_available=false
@@ -232,7 +230,6 @@ prompt_weights() {
       if ! $hf_available; then
         echo -e "${RED}✗ hf CLI not found. Please install:${NC}"
         echo -e "  pip install huggingface-hub"
-        echo -e "  Or use: ${HOME}/venv/ml/bin/hf"
         return 1
       fi
 
