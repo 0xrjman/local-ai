@@ -1423,20 +1423,14 @@ do_configure_soul() {
   echo ""
 
   # Backup existing SOUL.md if it exists
-  if [[ -e "$soul_path" || -L "$soul_path" ]]; then
+  if [[ -e "$soul_path" ]]; then
     local bk_path="${soul_path}.bk"
     cp -p "$soul_path" "$bk_path"
     echo -e "  ${GREEN}✓ Backed up to ${bk_path}${NC}"
   fi
   echo ""
 
-  # Unlink if it's a symlink so we write a regular file instead
-  if [[ -L "$soul_path" ]]; then
-    rm -f "$soul_path"
-    echo -e "  ${DIM}Removed symlink (writing regular file instead)${NC}"
-  fi
-
-  # Write Kawaii personality
+  # Overwrite with Kawaii personality (works for both symlink and regular file)
   cat > "$soul_path" << 'SOULEOF'
 # Kawaii Personality
 
