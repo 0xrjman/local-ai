@@ -448,11 +448,20 @@ do_up() {
   esac
   if [[ -d "$wdir" ]] && [[ -f "${wdir}/model.safetensors" || -n "$(ls "${wdir}"/*.gguf 2>/dev/null)" ]]; then
     ok 3; D[3]="$wdir"
-    render_step 3
   else
-    fail 3 "Not found: $wdir"
-    show_progress 3 "✗ "
-    echo ""; _fail_exit 3; return 1
+    render_step 3
+    if prompt_weights; then
+      # Re-check after download/setup
+      if [[ -d "$wdir" ]] && [[ -f "${wdir}/model.safetensors" || -n "$(ls "${wdir}"/*.gguf 2>/dev/null)" ]]; then
+        ok 3; D[3]="$wdir"
+      else
+        fail 3 "Weights still not found after setup"
+        echo ""; _fail_exit 3; return 1
+      fi
+    else
+      fail 3 "Weights not found, setup cancelled"
+      echo ""; _fail_exit 3; return 1
+    fi
   fi
   completed=4
 
