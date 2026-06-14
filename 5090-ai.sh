@@ -218,6 +218,13 @@ prompt_weights() {
 
   read -rp "  Choice [0-3]: " wchoice
 
+  # Auto-detect: if user typed a path instead of a number, treat as option 2
+  local _auto_path=""
+  if [[ "$wchoice" == /* || "$wchoice" == ~* ]]; then
+    _auto_path="$wchoice"
+    wchoice="2"
+  fi
+
   case "$wchoice" in
     1)
       # Download from HuggingFace
@@ -263,13 +270,20 @@ prompt_weights() {
       ;;
     2)
       # Specify existing directory
-      echo ""
-      echo -e "  Enter the path where ${BOLD}${WEIGHTS_SUBDIR}/${NC} exists"
-      echo -e "  You can enter the parent dir OR the weights dir directly"
-      echo -e "  Example: /home/user/models  (contains ${WEIGHTS_SUBDIR}/ subfolder)"
-      echo ""
-      read -rp "  MODEL_DIR: " new_dir
-      new_dir="${new_dir/#\~/$HOME}"
+      local new_dir
+      if [[ -n "${_auto_path:-}" ]]; then
+        new_dir="$_auto_path"
+        echo ""
+        echo -e "  Using path: ${BOLD}${new_dir}${NC}"
+      else
+        echo ""
+        echo -e "  Enter the path where ${BOLD}${WEIGHTS_SUBDIR}/${NC} exists"
+        echo -e "  You can enter the parent dir OR the weights dir directly"
+        echo -e "  Example: /home/user/models  (contains ${WEIGHTS_SUBDIR}/ subfolder)"
+        echo ""
+        read -rp "  MODEL_DIR: " new_dir
+        new_dir="${new_dir/#\~/$HOME}"
+      fi
       
       if [[ -d "${new_dir}/${WEIGHTS_SUBDIR}" ]]; then
         # User entered parent directory (e.g. /home/user/models)
