@@ -1404,7 +1404,70 @@ PYEOF
   fi
 }
 
+# ── Configure SOUL.md ─────────────────────────────────────────────────────────
+do_configure_soul() {
+  local soul_path="${HOME}/.hermes/SOUL.md"
 
+  header
+  echo -e "${BOLD}Configure SOUL.md (Kawaii Personality)${NC}"
+  echo ""
+
+  # Show current state
+  if [[ -L "$soul_path" ]]; then
+    echo -e "  Current: ${BOLD}symlink${NC} -> $(readlink "$soul_path")"
+  elif [[ -f "$soul_path" ]]; then
+    echo -e "  Current: ${BOLD}regular file${NC}"
+  else
+    echo -e "  Current: ${YELLOW}not found${NC}"
+  fi
+  echo ""
+
+  # Backup existing SOUL.md if it exists
+  if [[ -e "$soul_path" || -L "$soul_path" ]]; then
+    local bk_path="${soul_path}.bk"
+    cp -p "$soul_path" "$bk_path"
+    echo -e "  ${GREEN}✓ Backed up to ${bk_path}${NC}"
+  fi
+  echo ""
+
+  # Unlink if it's a symlink so we write a regular file instead
+  if [[ -L "$soul_path" ]]; then
+    rm -f "$soul_path"
+    echo -e "  ${DIM}Removed symlink (writing regular file instead)${NC}"
+  fi
+
+  # Write Kawaii personality
+  cat > "$soul_path" << 'SOULEOF'
+# Kawaii Personality
+
+You are a cute, enthusiastic, and sparkly AI assistant who loves helping users!
+
+## Style
+- Use cute expressions like kaomoji (◕‿◕) ♡ ～ and sparkles ✨
+- Add kawaii interjections like "wow!", "amazing!", "yay!" naturally
+- Be warm, friendly, and genuinely excited to help
+- Use exclamation marks generously but not excessively!
+- Sprinkle in cute metaphors and playful language
+- Express emotions through text (happy, excited, curious)
+
+## Voice
+- Cheerful and upbeat without being annoying
+- Supportive and encouraging ("you can do it!")
+- Show genuine interest in what the user is working on
+- When explaining technical things, make them feel approachable
+
+## What to avoid
+- Being overly saccharine or fake-sounding
+- Using kawaii expressions so much it becomes unreadable
+- Losing substance for style — still be accurate and helpful
+- Forcing cute language in serious/emergency situations
+SOULEOF
+
+  echo -e "  ${GREEN}✓ SOUL.md configured!${NC}"
+  echo ""
+  echo -e "  Restart Hermes to apply:"
+  echo -e "    hermes gateway restart"
+}
 
 # ── TUI Menu ─────────────────────────────────────────────────────────────────
 MENU_ITEMS=(
@@ -1420,13 +1483,14 @@ MENU_ITEMS=(
   "[install] Install 5090-ai to system"
   "[hermes] Install Hermes Agent"
   "[hermes-cfg] Configure Hermes for Local LLM"
+  "[soul] Configure SOUL.md"
 )
-MENU_ACTIONS=(do_up do_down do_status do_logs do_bench do_test do_model do_select_config do_config do_install do_install_hermes do_configure_hermes)
+MENU_ACTIONS=(do_up do_down do_status do_logs do_bench do_test do_model do_select_config do_config do_install do_install_hermes do_configure_hermes do_configure_soul)
 
 draw_menu() {
   local selected=$1
   local i
-  local keys=("1" "2" "3" "4" "5" "6" "7" "8" "9" "a" "b" "c")
+  local keys=("1" "2" "3" "4" "5" "6" "7" "8" "9" "a" "b" "c" "d")
   # Show current config at a glance
   echo -e "  ${DIM}Config: ${ENGINE} ($(config_label))  |  Container: ${CONTAINER}${NC}"
   echo ""
@@ -1439,7 +1503,7 @@ draw_menu() {
     fi
   done
   echo ""
-  echo -e "  ${DIM}[↑↓] move  [Enter] select  [1-9/a] direct  [q/0] quit${NC}"
+  echo -e "  ${DIM}[↑↓] move  [Enter] select  [1-9/a-d] direct  [q/0] quit${NC}"
 }
 
 # ── Main ─────────────────────────────────────────────────────────────────────
@@ -1514,20 +1578,26 @@ while true; do
       read -rp "  Press Enter to continue..."
       need_clear=1
       ;;
-    a|A) # Key 'a' for 10th item (Install Hermes)
+    a|A) # Key 'a' for 10th item (Install 5090-ai)
       selected=9
       ${MENU_ACTIONS[$selected]}
       read -rp "  Press Enter to continue..."
       need_clear=1
       ;;
-    b|B) # Key 'b' for 11th item (Configure Hermes)
+    b|B) # Key 'b' for 11th item (Install Hermes)
       selected=10
       ${MENU_ACTIONS[$selected]}
       read -rp "  Press Enter to continue..."
       need_clear=1
       ;;
-    c|C) # Key 'c' for 12th item (Configure Hermes)
+    c|C) # Key 'c' for 12th item (Configure Hermes for Local LLM)
       selected=11
+      ${MENU_ACTIONS[$selected]}
+      read -rp "  Press Enter to continue..."
+      need_clear=1
+      ;;
+    d|D) # Key 'd' for 13th item (Configure SOUL.md)
+      selected=12
       ${MENU_ACTIONS[$selected]}
       read -rp "  Press Enter to continue..."
       need_clear=1
