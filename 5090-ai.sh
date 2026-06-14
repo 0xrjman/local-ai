@@ -352,15 +352,10 @@ do_up() {
   # Count of completed steps (indices 0..n-1 have status set)
   local completed=0
 
-  # Print only the latest completed step + current step
-  # Previous steps are already on screen from earlier show_progress calls
+  # Print just the current step line (previous steps already on screen)
   show_progress() {
     local cur_idx=$1
     local cur_status=${2:-"..." }
-    # Print the just-completed step (if any)
-    if (( completed > 0 )); then
-      render_step "$((completed - 1))"
-    fi
     printf "  [%d/%d] %-6s %s\n" "$((cur_idx+1))" "${#S[@]}" "$cur_status" "${S[$cur_idx]}"
   }
 
@@ -416,6 +411,7 @@ do_up() {
   show_progress 1
   if mkdir -p "${ROOT_DIR}"/cache/{triton,torch_compile,flashinfer} 2>/dev/null; then
     ok 1; D[1]="cache/{triton,torch_compile,flashinfer}"
+    render_step 1
   else
     fail 1 "Failed to create cache directories"
     show_progress 1 "✗ "
@@ -427,9 +423,11 @@ do_up() {
   show_progress 2
   if [[ -f "${ROOT_DIR}/.env" ]]; then
     ok 2; D[2]="exists"
+    render_step 2
   else
     if cp "${ROOT_DIR}/.env.example" "${ROOT_DIR}/.env" 2>/dev/null; then
       ok 2; D[2]="created from .env.example"
+      render_step 2
     else
       fail 2 "No .env and no .env.example"
       show_progress 2 "✗ "
@@ -450,6 +448,7 @@ do_up() {
   esac
   if [[ -d "$wdir" ]] && [[ -f "${wdir}/model.safetensors" || -n "$(ls "${wdir}"/*.gguf 2>/dev/null)" ]]; then
     ok 3; D[3]="$wdir"
+    render_step 3
   else
     fail 3 "Not found: $wdir"
     show_progress 3 "✗ "
@@ -473,6 +472,7 @@ do_up() {
     done
   fi
   ok 4; D[4]="stopped $stale_count container(s)"
+  render_step 4
   completed=5
 
   # 5: Start container
@@ -487,6 +487,7 @@ do_up() {
     return 1
   }
   ok 5; D[5]="docker compose up -d"
+  render_step 5
   completed=6
 
   # 6: Wait for server
