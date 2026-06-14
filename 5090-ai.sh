@@ -352,29 +352,26 @@ do_up() {
   # Count of completed steps (indices 0..n-1 have status set)
   local completed=0
 
-  # Show completed steps + current step with spinner
-  # Uses cursor movement to overwrite previous output in-place
-  local _prev_lines=0
+  # Show completed steps + current step in progress
+  # Uses tput cuu + tput ed to overwrite previous output in-place
+  local _pc=0  # lines printed by last show_progress call
 
   show_progress() {
     local cur_idx=$1
     local cur_status=${2:-"..." }
     local i
-
-    # Move cursor up and clear all lines from previous show_progress call
-    if (( _prev_lines > 0 )); then
-      tput cuu "$_prev_lines" 2>/dev/null || true
-      tput ed   2>/dev/null || true
+    # Move cursor up and clear previous output (but not the header above)
+    if (( _pc > 0 )); then
+      tput cuu "$_pc" 2>/dev/null || true
+      tput ed 2>/dev/null || true
     fi
-
-    local printed=0
+    _pc=0
     for (( i=0; i<completed; i++ )); do
-      render_step $i
-      (( printed++ ))
+      render_step "$i"
+      _pc=$(( _pc + 2 ))
     done
-    printf "  [%d/%d] %-6s %s\n" $((cur_idx+1)) ${#S[@]} "$cur_status" "${S[$cur_idx]}"
-    (( printed++ ))
-    _prev_lines=$printed
+    printf "  [%d/%d] %-6s %s\n" "$((cur_idx+1))" "${#S[@]}" "$cur_status" "${S[$cur_idx]}"
+    _pc=$(( _pc + 1 ))
   }
 
   # Failure: show all steps up to failed one and exit
@@ -503,10 +500,10 @@ do_up() {
   completed=6
 
   # 6: Wait for server
-  # Clear "..." step, keep completed steps visible
-  if (( _prev_lines > 0 )); then
-    tput cuu "$_prev_lines" 2>/dev/null || true
-    tput ed   2>/dev/null || true
+  # Clear the last "..." step before starting the progress bar
+  if (( _pc > 0 )); then
+    tput cuu "$_pc" 2>/dev/null || true
+    tput ed 2>/dev/null || true
   fi
   echo ""
   if _wait_for_ready_inline; then
