@@ -111,6 +111,7 @@ gpu_info() {
 
 config_label() {
   case "$ENGINE" in
+    aeon-vision-mtp)  echo "AEON-XS MTP (Vision)" ;;
     nvfp4-text-mtp)  echo "NVFP4+MTP (Text)" ;;
     nvfp4-vision-mtp)  echo "NVFP4+MTP (Vision)" ;;
     nvfp4-vision-turboquant-mtp)  echo "NVFP4+MTP+TurboQuant (Vision)" ;;
@@ -164,6 +165,7 @@ get_weights_subdir() {
     nvfp4-text-mtp) echo "qwen3.6-27b-nvfp4-mtp" ;;
     nvfp4-vision-mtp)  echo "huihui-qwen3.6-27b-abliterated-nvfp4-mtp" ;;
     nvfp4-vision-turboquant-mtp)  echo "huihui-qwen3.6-27b-abliterated-nvfp4-mtp" ;;
+    aeon-vision-mtp)  echo "aeon-qwen3.6-27b-ultimate-nvfp4-mtp-xs" ;;
     beellama-mtp-vision)  echo "qwopus-3.6-27b-coder-mtp-gguf" ;;
     beellama)       echo "qwen3.6-27b-gguf" ;;
     *)              echo "qwen3.6-27b-nvfp4-mtp" ;;
@@ -172,6 +174,7 @@ get_weights_subdir() {
 WEIGHTS_SUBDIR="$(get_weights_subdir)"
 get_hf_repo() {
   case "$ENGINE" in
+    aeon-vision-mtp)  echo "AEON-7/Qwen3.6-27B-AEON-Ultimate-Uncensored-Multimodal-NVFP4-MTP-XS" ;;
     nvfp4-text-mtp) echo "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP" ;;
     nvfp4-vision-mtp) echo "sakamakismile/Huihui-Qwen3.6-27B-abliterated-NVFP4-MTP" ;;
     nvfp4-vision-turboquant-mtp) echo "sakamakismile/Huihui-Qwen3.6-27B-abliterated-NVFP4-MTP" ;;
@@ -191,6 +194,9 @@ prompt_weights() {
   echo -e "  Looking for: ${BOLD}${MODEL_DIR}/${WEIGHTS_SUBDIR}/${NC}"
   echo ""
   case "$ENGINE" in
+    aeon-vision-mtp)
+      echo -e "  Model: ${BOLD}Qwen3.6-27B AEON Ultimate XS (abliterated + MTP)${NC}"
+      ;;
     nvfp4-vision-mtp)
       echo -e "  Model: ${BOLD}Qwen3.6-27B NVFP4 (Huihui abliterated + MTP)${NC}"
       ;;
@@ -198,7 +204,7 @@ prompt_weights() {
       echo -e "  Model: ${BOLD}Qwen3.6-27B-Text-NVFP4-MTP${NC}"
       ;;
   esac
-  echo -e "  Size:  ~19 GB (NVFP4 + MTP n=3)"
+  echo -e "  Size:  ~21 GB (NVFP4 + GDN projections FP4)"
   echo -e "  Link:  ${BLUE}${HF_URL}${NC}"
   echo ""
   echo -e "${BOLD}How would you like to proceed?${NC}"
@@ -1137,6 +1143,7 @@ do_install_hermes() {
 
 do_select_config() {
   local configs=(
+    "aeon-vision-mtp"
     "nvfp4-text-mtp"
     "nvfp4-vision-mtp"
     "nvfp4-vision-turboquant-mtp"
@@ -1144,6 +1151,7 @@ do_select_config() {
     "beellama-mtp-vision"
   )
   local labels=(
+    "Engine: vLLM · KV: fp8_e4m3 · Ctx: 256K · MTP3 · Vision · AEON-XS"
     "Engine: vLLM · KV: fp8_e4m3 · Ctx: 219K · MTP3"
     "Engine: vLLM · KV: fp8_e4m3 · Ctx: 216K · MTP3 · Vision"
     "Engine: vLLM · KV: turboquant · Ctx: 380K · MTP3 · Vision · P67+PN8+PN34+P82"
@@ -1205,6 +1213,16 @@ do_select_config() {
   local COMPOSE_FILE_OLD="$COMPOSE_FILE"
 
   case "$choice" in
+    aeon-vision-mtp)
+      ENGINE="aeon-vision-mtp"
+      save_env "ENGINE" "aeon-vision-mtp"
+      save_env "CONTAINER" "vllm-aeon-vision-mtp"
+      COMPOSE_FILE="${ROOT_DIR}/compose/aeon-vision-mtp.yml"
+      CONTAINER="vllm-aeon-vision-mtp"
+      WEIGHTS_SUBDIR="$(get_weights_subdir)"
+      echo ""
+      echo -e "${GREEN}✓ Switched to AEON Ultimate XS NVFP4+MTP (Vision)${NC}"
+      ;;
     nvfp4-text-mtp)
       ENGINE="nvfp4-text-mtp"
       save_env "ENGINE" "nvfp4-text-mtp"
@@ -1260,12 +1278,13 @@ do_select_config() {
   echo ""
   echo -e "  ${BOLD}Requirements:${NC}"
   case "$ENGINE" in
-    nvfp4-text-mtp|nvfp4-vision-mtp|nvfp4-vision-turboquant-mtp)
+    nvfp4-text-mtp|nvfp4-vision-mtp|nvfp4-vision-turboquant-mtp|aeon-vision-mtp)
       echo -e "  - Weights: ${MODEL_DIR}/${WEIGHTS_SUBDIR}/"
       echo -e "  - Docker:  vllm/vllm-openai:v0.23.0"
       echo ""
       echo -e "  ${DIM}Download:${NC}"
       echo -e "    hf download ${HF_REPO} --local-dir ${MODEL_DIR}/${WEIGHTS_SUBDIR}"
+      echo -e "    ${DIM}Fallback: modelscope download --model ${HF_REPO} --local-dir ${MODEL_DIR}/${WEIGHTS_SUBDIR}${NC}"
       ;;
     beellama|beellama-mtp-vision)
       echo -e "  - Weights: ${MODEL_DIR}/${WEIGHTS_SUBDIR}/"
@@ -1279,8 +1298,8 @@ do_select_config() {
           echo -e "    hf download unsloth/Qwen3.6-27B-GGUF --include 'mmproj-F16.gguf' --local-dir ${MODEL_DIR}/qwen3.6-27b-gguf"
           ;;
         beellama-mtp-vision)
-          echo -e "    hf download Jackrong/Qwopus3.6-27B-Coder-MTP-GGUF --local-dir ${MODEL_DIR}/qwopus-3.6-27b-coder-mtp-gguf"
-          echo -e "    ${DIM}Fallback: modelscope download --model Jackrong/Qwopus3.6-27B-Coder-MTP-GGUF --include '*Q4_K_M*' --local-dir ${MODEL_DIR}/qwopus-3.6-27b-coder-mtp-gguf${NC}"
+          echo -e "    hf download Jackrong/Qwopus3.6-27B-Coder-MTP-GGUF --include 'Q4_K_M*' --include 'mmproj*' --local-dir ${MODEL_DIR}/qwopus-3.6-27b-coder-mtp-gguf"
+          echo -e "    ${DIM}Fallback: modelscope download --model Jackrong/Qwopus3.6-27B-Coder-MTP-GGUF --include 'Q4_K_M*' --include 'mmproj*' --local-dir ${MODEL_DIR}/qwopus-3.6-27b-coder-mtp-gguf${NC}"
           ;;
       esac
       ;;
