@@ -1122,7 +1122,7 @@ do_select_config() {
   local labels=(
     "Engine: vLLM · KV: fp8_e4m3 · Ctx: 219K · MTP3"
     "Engine: vLLM · KV: fp8_e4m3 · Ctx: 216K · MTP3 · Vision"
-    "Engine: vLLM · KV: turboquant · Ctx: 400K · MTP3 · Vision · P67+PN8+PN34+P82"
+    "Engine: vLLM · KV: turboquant · Ctx: 380K · MTP3 · Vision · P67+PN8+PN34+P82"
     "Engine: beellama.cpp · KV: q5_0/q4_1 · Ctx: 262K · DFlash · Vision"
     "Engine: beellama.cpp · MTP · Ctx: 262K · Q4_K_M · Vision · Coder · no-thinking"
   )

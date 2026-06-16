@@ -18,7 +18,7 @@
 # Env overrides:
 #   MODEL_DIR         weights root            (default: ../models)
 #   MODEL_ALIAS       served model name       (default: local)
-#   MAX_MODEL_LEN     context length          (default: 209200)
+#   MAX_MODEL_LEN     context length          (default: 380000)
 #   GPU_MEMORY_UTIL   VRAM fraction           (default: 0.92)
 #   SPEC_N_MAX        MTP draft tokens        (default: 3)
 #   MAX_NUM_SEQS      max concurrent          (default: 4)
@@ -93,7 +93,7 @@ services:
       - --tensor-parallel-size
       - "1"
       - --max-model-len
-      - "${MAX_MODEL_LEN:-400200}"
+      - "${MAX_MODEL_LEN:-380000}"
       - --gpu-memory-utilization
       - "${GPU_MEMORY_UTIL:-0.92}"
       - --max-num-seqs
