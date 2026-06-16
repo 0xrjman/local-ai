@@ -129,8 +129,7 @@ Then run `5090-ai` from anywhere.
 5090-ai/
 ├── 5090-ai.sh              # Main TUI script
 ├── compose/
-│   ├── mtp.yml             # vLLM NVFP4+MTP (default)
-│   └── nvfp4-turboquant.yml # vLLM NVFP4+TurboQuant (experimental)
+│   └── mtp.yml             # vLLM NVFP4+MTP (default)
 ├── scripts/
 │   ├── bench.sh            # Sequential benchmark
 │   └── bench-concurrent.sh # Concurrent throughput benchmark
