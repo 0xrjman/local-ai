@@ -549,6 +549,9 @@ do_up() {
     echo -e "  ${GREEN}✓ Server is running!${NC}"
     echo -e "  API: ${CYAN}http://localhost:${PORT}/v1${NC}"
     echo ""
+    echo -e "  ${BOLD}──────── Container logs (live, Ctrl+C to return) ────────${NC}"
+    docker logs -f --tail 20 "$CONTAINER" 2>&1
+    echo ""
     return 0
   else
     fail 6 "server did not become ready"
@@ -567,10 +570,11 @@ do_up() {
 }
 
 
-# Inline progress bar for wait step — updates in-place without clearing screen
+# Inline progress bar for wait step — shows container logs alongside progress
 _wait_for_ready_inline() {
   local elapsed=0
   local bar_width=40
+  local log_lines=8  # how many log lines to show
 
   # Pre-build bar cache
   local -a bc=()
@@ -582,7 +586,8 @@ _wait_for_ready_inline() {
     bc[$i]="$s"
   done
 
-  local prev_msg="starting"
+  # Total lines printed per iteration: 1 progress + 1 blank + log_lines = log_lines+2
+  local lines_per_iter=$(( log_lines + 2 ))
 
   while (( elapsed < 600 )); do
     if is_ready; then
@@ -604,18 +609,37 @@ _wait_for_ready_inline() {
     (( pct > 95 )) && pct=95
     local filled=$(( pct * bar_width / 100 ))
     (( filled > bar_width )) && filled=$bar_width
+    local bar_str="${bc[$filled]}"
     local mins=$(( elapsed / 60 ))
     local secs=$(( elapsed % 60 ))
-    local bar_str="${bc[$filled]}"
 
-    # Get latest log snippet for context
-    local latest_msg
-    latest_msg=$(docker logs --tail 2 "$CONTAINER" 2>&1 | grep -oE '(Loading|Warmup|startup|schedul|graph|weights|drafter|fp8|safetensor|complete)' 2>/dev/null | tail -1 || echo "$prev_msg")
-    [[ -n "$latest_msg" ]] && prev_msg="$latest_msg"
+    # On subsequent iterations, move cursor up to overwrite previous block
+    if (( elapsed > 0 )); then
+      printf "\033[%dA\033[J" "$lines_per_iter"
+    fi
 
-    # Overwrite current line
-    printf "\r\033[K  [7/7] \033[33m...\033[0m Waiting... [\033[36m${bar_str}\033[0m] %3d%% [%dm%02ds] %s\r" \
-      "$pct" "$mins" "$secs" "$prev_msg"
+    # Progress bar line
+    printf "  [7/7] \033[33m...\033[0m Waiting... [\033[36m%s\033[0m] %3d%% [%dm%02ds]\n" \
+      "$bar_str" "$pct" "$mins" "$secs"
+    echo ""
+
+    # Print exactly log_lines of container output (pad/truncate to keep position stable)
+    local term_width
+    term_width=$(tput cols 2>/dev/null || echo 100)
+    local line_width=$(( term_width - 3 ))  # 2 indent + 1 margin
+    local line_idx=0
+    while IFS= read -r line; do
+      if (( line_idx < log_lines )); then
+        # Truncate to fit terminal width (prevents line-wrap chaos)
+        printf "  %.${line_width}s\n" "$line"
+        (( line_idx++ ))
+      fi
+    done < <(docker logs --tail "$log_lines" "$CONTAINER" 2>&1)
+    # Pad remaining lines if docker output was short
+    while (( line_idx < log_lines )); do
+      echo ""
+      (( line_idx++ ))
+    done
 
     sleep 2
     elapsed=$((elapsed + 2))
