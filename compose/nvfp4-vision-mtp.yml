@@ -35,10 +35,12 @@ services:
     ports:
       - "${PORT:-8020}:8000"
     volumes:
+      - ${GENESIS_DIR:-../genesis/vllm/_genesis}:/usr/local/lib/python3.12/dist-packages/vllm/_genesis:ro
       - ${MODEL_DIR:-../models}:/root/.cache/huggingface
       - ../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
       - ../cache/triton:/root/.triton/cache
       - ../cache/flashinfer:/root/.cache/flashinfer
+      - ../patches/huihui-chat-template/chat_template.jinja:/etc/qwen-froggeric-chat-template.jinja:ro
     environment:
       - NVIDIA_VISIBLE_DEVICES=${GPU_DEVICE:-0}
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
@@ -51,9 +53,10 @@ services:
       - OMP_NUM_THREADS=1
       - PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True,max_split_size_mb:512}
       - VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
-      - VLLM_FLOAT32_MATMUL_PRECISION=high
       - VLLM_USE_FLASHINFER_SAMPLER=1
+      - VLLM_TEST_ENABLE_AOT_COMPILE=1
       - TRITON_CACHE_DIR=/root/.triton/cache
+      - TRITON_COMPILE_BYTECODE=1
       - CUDA_DEVICE_MAX_CONNECTIONS=8
     shm_size: "16gb"
     ipc: host
@@ -64,7 +67,12 @@ services:
             - driver: nvidia
               device_ids: ["${GPU_DEVICE:-0}"]
               capabilities: [gpu]
+    entrypoint: ["/bin/bash", "-c"]
     command:
+      - |
+        python3 -m vllm._genesis.patches.apply_all
+        exec vllm serve "$@"
+      - "--"
       - --host
       - 0.0.0.0
       - --port
@@ -76,17 +84,17 @@ services:
       - --quantization
       - compressed-tensors
       - --dtype
-      - bfloat16
+      - float16
       - --tensor-parallel-size
       - "1"
       - --max-model-len
-      - "${MAX_MODEL_LEN:-209200}"
+      - "${MAX_MODEL_LEN:-216000}"
       - --gpu-memory-utilization
-      - "${GPU_MEMORY_UTIL:-0.95}"
+      - "${GPU_MEMORY_UTIL:-0.94}"
       - --max-num-seqs
       - "${MAX_NUM_SEQS:-4}"
       - --max-num-batched-tokens
-      - "8192"
+      - "${MAX_NUM_BATCHED:-4096}"
       - --kv-cache-dtype
       - fp8_e4m3
       - --trust-remote-code
@@ -95,9 +103,15 @@ services:
       - --enable-auto-tool-choice
       - --tool-call-parser
       - qwen3_coder
+      - --chat-template
+      - /etc/qwen-froggeric-chat-template.jinja
       - --enable-prefix-caching
       - --enable-chunked-prefill
-      - --speculative-config
-      - '{"method":"mtp","num_speculative_tokens":${SPEC_N_MAX:-3}}'
       - --performance-mode
       - interactivity
+
+      - --speculative-config
+      - '{"method":"mtp","num_speculative_tokens":${SPEC_N_MAX:-3}}'
+
+      # - --compilation-config
+      # - '{"mode":"VLLM_COMPILE","max_cudagraph_capture_size": 4,"compile_sizes":[1,2,3,4]}'

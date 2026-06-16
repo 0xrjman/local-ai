@@ -1,45 +1,52 @@
 # ──────────────────────────────────────────────────────────────────────────────
-# vLLM NVFP4+MTP — Qwen3.6-27B on RTX 5090
+# vLLM NVFP4+MTP — Qwen3.6-27B (Huihui abliterated) + TurboQuant 4-bit KV
 # ──────────────────────────────────────────────────────────────────────────────
 #
-# Engine:    vLLM v0.22.1
-# Model:     Qwen3.6-27B NVFP4 (sakamakismile — Blackwell FP4 native)
+# Engine:    vLLM v0.23.0
+# Model:     Qwen3.6-27B NVFP4 (sakamakismile — Huihui abliterated + MTP)
 # Drafter:   MTP n=3 (embedded MTP head, bf16)
-# KV cache:  fp8_e4m3 (Blackwell-native)
-# Vision:    no (text-only)
-# Context:   219K tokens (~224K safe ceiling)
-# Concurrency: 6 sequences
+# KV cache:  turboquant_4bit_nc (TurboQuant 4-bit, non-contiguous)
+# Vision:    yes (mmproj, Qwen3.5 arch)
+# Context:   209K tokens (~214K safe ceiling)
+# Concurrency: 4 sequences
 # Perf mode: interactivity
 #
 # Weights:
-#   https://huggingface.co/sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP
-#   ~19 GB, expects: $MODEL_DIR/qwen3.6-27b-nvfp4-mtp/model.safetensors
+#   https://huggingface.co/sakamakismile/Huihui-Qwen3.6-27B-abliterated-NVFP4-MTP
+#   ~19 GB, expects: $MODEL_DIR/huihui-qwen3.6-27b-abliterated-nvfp4-mtp/model.safetensors
 #
 # Env overrides:
 #   MODEL_DIR         weights root            (default: ../models)
 #   MODEL_ALIAS       served model name       (default: local)
-#   MAX_MODEL_LEN     context length          (default: 219200)
-#   GPU_MEMORY_UTIL   VRAM fraction           (default: 0.94)
+#   MAX_MODEL_LEN     context length          (default: 209200)
+#   GPU_MEMORY_UTIL   VRAM fraction           (default: 0.92)
 #   SPEC_N_MAX        MTP draft tokens        (default: 3)
-#   MAX_NUM_SEQS      max concurrent          (default: 6)
+#   MAX_NUM_SEQS      max concurrent          (default: 4)
 #   PORT              host port               (default: 8020)
-#   VLLM_IMAGE        Docker image            (default: vllm/vllm-openai:v0.22.1)
+#   VLLM_IMAGE        Docker image            (default: vllm/vllm-openai:v0.23.0)
 #
 # ──────────────────────────────────────────────────────────────────────────────
 
 services:
-  vllm-qwen36-nvfp4-mtp:
-    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.22.1}
-    container_name: "vllm-qwen36-nvfp4-mtp"
+  vllm-nvfp4-vision-tq-mtp:
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.23.0}
+    container_name: "vllm-nvfp4-vision-tq-mtp"
     restart: unless-stopped
     ports:
       - "${PORT:-8020}:8000"
     volumes:
+      - ${GENESIS_DIR:-../genesis/vllm/_genesis}:/usr/local/lib/python3.12/dist-packages/vllm/_genesis:ro
       - ${MODEL_DIR:-../models}:/root/.cache/huggingface
       - ../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
       - ../cache/triton:/root/.triton/cache
       - ../cache/flashinfer:/root/.cache/flashinfer
+      - ../patches/huihui-chat-template/chat_template.jinja:/etc/qwen-froggeric-chat-template.jinja:ro
     environment:
+      - GENESIS_ENABLE_P98=1
+      - GENESIS_ENABLE_P67_TQ_MULTI_QUERY_KERNEL=1
+      - GENESIS_ENABLE_PN8_MTP_DRAFT_ONLINE_QUANT=1
+      - GENESIS_ENABLE_PN34_WORKSPACE_LOCK_RELAX=1
+      - GENESIS_ENABLE_P82=1
       - NVIDIA_VISIBLE_DEVICES=${GPU_DEVICE:-0}
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
       - VLLM_WORKER_MULTIPROC_METHOD=spawn
@@ -51,9 +58,10 @@ services:
       - OMP_NUM_THREADS=1
       - PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True,max_split_size_mb:512}
       - VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
-      - VLLM_FLOAT32_MATMUL_PRECISION=high
       - VLLM_USE_FLASHINFER_SAMPLER=1
+      - VLLM_TEST_ENABLE_AOT_COMPILE=1
       - TRITON_CACHE_DIR=/root/.triton/cache
+      - TRITON_COMPILE_BYTECODE=1
       - CUDA_DEVICE_MAX_CONNECTIONS=8
     shm_size: "16gb"
     ipc: host
@@ -64,13 +72,18 @@ services:
             - driver: nvidia
               device_ids: ["${GPU_DEVICE:-0}"]
               capabilities: [gpu]
+    entrypoint: ["/bin/bash", "-c"]
     command:
+      - |
+        python3 -m vllm._genesis.patches.apply_all
+        exec vllm serve "$@"
+      - "--"
       - --host
       - 0.0.0.0
       - --port
       - "8000"
       - --model
-      - /root/.cache/huggingface/qwen3.6-27b-nvfp4-mtp
+      - /root/.cache/huggingface/huihui-qwen3.6-27b-abliterated-nvfp4-mtp
       - --served-model-name
       - ${MODEL_ALIAS:-local}
       - --quantization
@@ -80,26 +93,30 @@ services:
       - --tensor-parallel-size
       - "1"
       - --max-model-len
-      - "${MAX_MODEL_LEN:-219200}"
+      - "${MAX_MODEL_LEN:-400200}"
       - --gpu-memory-utilization
-      - "${GPU_MEMORY_UTIL:-0.94}"
+      - "${GPU_MEMORY_UTIL:-0.92}"
       - --max-num-seqs
-      - "${MAX_NUM_SEQS:-2}"
+      - "${MAX_NUM_SEQS:-4}"
       - --max-num-batched-tokens
       - "${MAX_NUM_BATCHED:-4096}"
       - --kv-cache-dtype
-      - fp8_e4m3
+      - turboquant_4bit_nc
       - --trust-remote-code
       - --reasoning-parser
       - qwen3
       - --enable-auto-tool-choice
       - --tool-call-parser
       - qwen3_coder
+      - --chat-template
+      - /etc/qwen-froggeric-chat-template.jinja
       - --enable-prefix-caching
       - --enable-chunked-prefill
-      - --speculative-config
-      - '{"method":"mtp","num_speculative_tokens":${SPEC_N_MAX:-3}}'
-      - --language-model-only
-      - --skip-mm-profiling
       - --performance-mode
       - interactivity
+
+      - --speculative-config
+      - '{"method":"mtp","num_speculative_tokens":${SPEC_N_MAX:-3}}'
+
+      # - --compilation-config
+      # - '{"mode":"VLLM_COMPILE","max_cudagraph_capture_size": 4,"compile_sizes":[1,2,3,4]}'

@@ -38,13 +38,17 @@ case "$ENGINE" in
     COMPOSE_FILE="${ROOT_DIR}/compose/beellama/dflash-vision.yml"
     CONTAINER="${CONTAINER:-beellama-qwen36-27b-dflash-vision}"
     ;;
-  vllm-tq)
-    COMPOSE_FILE="${ROOT_DIR}/compose/nvfp4-turboquant.yml"
-    CONTAINER="${CONTAINER:-vllm-qwen36-nvfp4-tq}"
+  beellama-mtp-vision)
+    COMPOSE_FILE="${ROOT_DIR}/compose/beellama/qwopus-mtp-vision.yml"
+    CONTAINER="${CONTAINER:-beellama-qwopus-mtp-vision}"
     ;;
   nvfp4-vision-mtp)
     COMPOSE_FILE="${ROOT_DIR}/compose/nvfp4-vision-mtp.yml"
     CONTAINER="${CONTAINER:-vllm-nvfp4-vision-mtp}"
+    ;;
+  nvfp4-vision-turboquant-mtp)
+    COMPOSE_FILE="${ROOT_DIR}/compose/nvfp4-vision-turboquant-mtp.yml"
+    CONTAINER="${CONTAINER:-vllm-nvfp4-vision-tq-mtp}"
     ;;
   nvfp4-text-mtp|*)
     COMPOSE_FILE="${ROOT_DIR}/compose/nvfp4-text-mtp.yml"
@@ -109,17 +113,19 @@ config_label() {
   case "$ENGINE" in
     nvfp4-text-mtp)  echo "NVFP4+MTP (Text)" ;;
     nvfp4-vision-mtp)  echo "NVFP4+MTP (Vision)" ;;
-    vllm-tq)         echo "NVFP4+TurboQuant" ;;
+    nvfp4-vision-turboquant-mtp)  echo "NVFP4+MTP+TurboQuant (Vision)" ;;
     beellama)        echo "DFlash Vision" ;;
+    beellama-mtp-vision)  echo "Qwopus MTP Vision" ;;
     *)               echo "$ENGINE" ;;
   esac
 }
 
 header() {
-  clear
-  echo -e "${CYAN}${BOLD}╔══════════════════════════════════════════════════════════╗${NC}"
-  echo -e "${CYAN}${BOLD}║${NC}  ${BOLD}5090-ai${NC}  ·  $(config_label)  ·  RTX 5090  ${CYAN}${BOLD}║${NC}"
-  echo -e "${CYAN}${BOLD}╚══════════════════════════════════════════════════════════╝${NC}"
+  local label=$(config_label)
+  echo -e "  ${CYAN}${BOLD}┌────────────────────────────────────────────────────────┐${NC}"
+  echo -e "  ${CYAN}${BOLD}│${NC}  ${BOLD}5090-ai${NC}  ${CYAN}·${NC} ${BOLD}${label}${NC}"
+  echo -e "  ${CYAN}${BOLD}│${NC}  ${CYAN}RTX 5090${NC}"
+  echo -e "  ${CYAN}${BOLD}└────────────────────────────────────────────────────────┘${NC}"
   echo ""
 }
 
@@ -157,7 +163,8 @@ get_weights_subdir() {
   case "$ENGINE" in
     nvfp4-text-mtp) echo "qwen3.6-27b-nvfp4-mtp" ;;
     nvfp4-vision-mtp)  echo "huihui-qwen3.6-27b-abliterated-nvfp4-mtp" ;;
-    vllm-tq)        echo "qwen3.6-27b-nvfp4-mtp" ;;
+    nvfp4-vision-turboquant-mtp)  echo "huihui-qwen3.6-27b-abliterated-nvfp4-mtp" ;;
+    beellama-mtp-vision)  echo "qwopus-3.6-27b-coder-mtp-gguf" ;;
     beellama)       echo "qwen3.6-27b-gguf" ;;
     *)              echo "qwen3.6-27b-nvfp4-mtp" ;;
   esac
@@ -167,7 +174,8 @@ get_hf_repo() {
   case "$ENGINE" in
     nvfp4-text-mtp) echo "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP" ;;
     nvfp4-vision-mtp) echo "sakamakismile/Huihui-Qwen3.6-27B-abliterated-NVFP4-MTP" ;;
-    vllm-tq)        echo "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP" ;;
+    nvfp4-vision-turboquant-mtp) echo "sakamakismile/Huihui-Qwen3.6-27B-abliterated-NVFP4-MTP" ;;
+    beellama-mtp-vision) echo "Jackrong/Qwopus3.6-27B-Coder-MTP-GGUF" ;;
     beellama)       echo "unsloth/Qwen3.6-27B-GGUF" ;;
     *)              echo "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP" ;;
   esac
@@ -176,6 +184,7 @@ HF_REPO="$(get_hf_repo)"
 HF_URL="https://huggingface.co/${HF_REPO}"
 
 prompt_weights() {
+  clear
   header
   echo -e "${YELLOW}${BOLD}Weights not found!${NC}"
   echo ""
@@ -896,6 +905,7 @@ do_config() {
 }
 
 do_model() {
+  clear
   header
   echo -e "${BOLD}Model configuration:${NC}"
   echo ""
@@ -948,6 +958,7 @@ else:
 }
 
 do_install() {
+  clear
   header
   echo -e "${BOLD}Install 5090-ai to system${NC}"
   echo ""
@@ -1048,7 +1059,7 @@ do_install() {
 }
 
 do_install_hermes() {
-
+  clear
   header
   echo -e "${BOLD}Install Hermes Agent${NC}"
   echo ""
@@ -1101,51 +1112,76 @@ do_install_hermes() {
 
 
 do_select_config() {
-  header
-  echo -e "${BOLD}Select Configuration${NC}"
-  echo ""
-  echo -e "  Current: ${GREEN}${ENGINE}${NC}"
-  echo ""
-  echo -e "  ─────────────────────────────────────────────────────────────"
-  echo ""
-  echo -e "  ${BOLD}1)${NC} nvfp4-text-mtp  ${DIM}[NVFP4 + MTP]${NC}"
-  echo -e "     Model:    Qwen3.6-27B NVFP4 (sakamakismile)"
-  echo -e "     Engine:   vLLM v0.23.0"
-  echo -e "     Context:  219K | KV: fp8_e4m3 | Vision: no"
-  echo -e "     Speed:    ~92 TPS | Size: ~19 GB"
-  echo -e "     ${DIM}Requires: qwen3.6-27b-nvfp4-mtp/ (HuggingFace)${NC}"
-  echo ""
-  echo -e "  ${BOLD}2)${NC} nvfp4-vision-mtp  ${DIM}[NVFP4 + MTP (Vision)]${NC}"
-  echo -e "     Model:    Qwen3.6-27B NVFP4 (unsloth)"
-  echo -e "     Engine:   vLLM v0.23.0"
-  echo -e "     Context:  209K | KV: fp8_e4m3 | Vision: yes"
-  echo -e "     Speed:    ~92 TPS | Size: ~19 GB"
-  echo -e "     ${DIM}Requires: qwen3.6-27b-nvfp4-vision/ (HuggingFace)${NC}"
-  echo ""
-  echo -e "  ${BOLD}3)${NC} beellama  ${DIM}[DFlash + Vision]${NC}"
-  echo -e "     Model:    Qwen3.6-27B Q5_K_S GGUF (Unsloth)"
-  echo -e "     Engine:   beellama.cpp v0.3.1"
-  echo -e "     Context:  262K | KV: q5_0/q4_1 | Vision: yes"
-  echo -e "     Speed:    ~100 TPS | Size: ~16 GB"
-  echo -e "     ${DIM}Requires: qwen3.6-27b-gguf/ (3 GGUF files)${NC}"
-  echo ""
-  echo -e "  ${BOLD}4)${NC} vllm-tq  ${DIM}[NVFP4 + TurboQuant 4-bit KV]${NC}"
-  echo -e "     Model:    Qwen3.6-27B NVFP4 (sakamakismile)"
-  echo -e "     Engine:   vLLM v0.23.0"
-  echo -e "     Context:  120K | KV: turboquant_4bit_nc | Vision: no"
-  echo -e "     Concurrency: 6 | MTP: no"
-  echo -e "     ${DIM}Requires: qwen3.6-27b-nvfp4-mtp/ (HuggingFace)${NC}"
-  echo ""
-  echo -e "  ─────────────────────────────────────────────────────────────"
-  echo ""
-  echo -e "  ${BOLD}0)${NC} Cancel"
-  echo ""
-  read -rp "  Choice: " choice
+  local configs=(
+    "nvfp4-text-mtp"
+    "nvfp4-vision-mtp"
+    "nvfp4-vision-turboquant-mtp"
+    "beellama"
+    "beellama-mtp-vision"
+  )
+  local labels=(
+    "Engine: vLLM · KV: fp8_e4m3 · Ctx: 219K · MTP3"
+    "Engine: vLLM · KV: fp8_e4m3 · Ctx: 216K · MTP3 · Vision"
+    "Engine: vLLM · KV: turboquant · Ctx: 400K · MTP3 · Vision · P67+PN8+PN34+P82"
+    "Engine: beellama.cpp · KV: q5_0/q4_1 · Ctx: 262K · DFlash · Vision"
+    "Engine: beellama.cpp · MTP · Ctx: 262K · Q4_K_M · Vision · Coder · no-thinking"
+  )
+  local selected=0
+  local config_count=${#configs[@]}
+  local choice
 
+  tput civis 2>/dev/null || true
+
+  while true; do
+    header
+    echo -e "${BOLD}Select Configuration${NC}"
+    echo ""
+    echo -e "  ${DIM}Current: ${ENGINE}${NC}"
+    echo ""
+    echo -e "  ─────────────────────────────────────────────────────────────"
+    echo ""
+
+    for i in "${!configs[@]}"; do
+      if (( i == selected )); then
+        echo -e "  ${GREEN}${BOLD}▸ ${configs[$i]}${NC}"
+        echo -e "     ${GREEN}${labels[$i]}${NC}"
+      else
+        echo -e "    ${DIM}${configs[$i]}${NC}"
+        echo -e "     ${DIM}${labels[$i]}${NC}"
+      fi
+      echo ""
+    done
+
+    echo -e "  ─────────────────────────────────────────────────────────────"
+    echo ""
+    echo -e "  ${DIM}[↑↓] move  [Enter] select  [q] quit${NC}"
+    echo ""
+
+    IFS= read -rsn1 key
+    case "$key" in
+      $'\x1b')
+        read -rsn2 -t 0.1 key2
+        case "$key2" in
+          '[A') selected=$(( (selected - 1 + config_count) % config_count )) ;;
+          '[B') selected=$(( (selected + 1) % config_count )) ;;
+        esac
+        ;;
+      '')
+        choice="${configs[$selected]}"
+        break
+        ;;
+      q|Q)
+        tput cnorm 2>/dev/null || true
+        return 0
+        ;;
+    esac
+  done
+
+  tput cnorm 2>/dev/null || true
   local COMPOSE_FILE_OLD="$COMPOSE_FILE"
 
   case "$choice" in
-    1)
+    nvfp4-text-mtp)
       ENGINE="nvfp4-text-mtp"
       save_env "ENGINE" "nvfp4-text-mtp"
       save_env "CONTAINER" "vllm-qwen36-nvfp4-mtp"
@@ -1155,7 +1191,7 @@ do_select_config() {
       echo ""
       echo -e "${GREEN}✓ Switched to vLLM NVFP4+MTP (Text)${NC}"
       ;;
-    2)
+    nvfp4-vision-mtp)
       ENGINE="nvfp4-vision-mtp"
       save_env "ENGINE" "nvfp4-vision-mtp"
       save_env "CONTAINER" "vllm-nvfp4-vision-mtp"
@@ -1165,7 +1201,17 @@ do_select_config() {
       echo ""
       echo -e "${GREEN}✓ Switched to vLLM NVFP4+MTP (Vision)${NC}"
       ;;
-    3)
+    nvfp4-vision-turboquant-mtp)
+      ENGINE="nvfp4-vision-turboquant-mtp"
+      save_env "ENGINE" "nvfp4-vision-turboquant-mtp"
+      save_env "CONTAINER" "vllm-nvfp4-vision-tq-mtp"
+      COMPOSE_FILE="${ROOT_DIR}/compose/nvfp4-vision-turboquant-mtp.yml"
+      CONTAINER="vllm-nvfp4-vision-tq-mtp"
+      WEIGHTS_SUBDIR="$(get_weights_subdir)"
+      echo ""
+      echo -e "${GREEN}✓ Switched to vLLM NVFP4+MTP+TurboQuant (Vision)${NC}"
+      ;;
+    beellama)
       ENGINE="beellama"
       save_env "ENGINE" "beellama"
       save_env "CONTAINER" "beellama-qwen36-27b-dflash-vision"
@@ -1175,53 +1221,44 @@ do_select_config() {
       echo ""
       echo -e "${GREEN}✓ Switched to Beellama DFlash Vision${NC}"
       ;;
-    4)
-      ENGINE="vllm-tq"
-      save_env "ENGINE" "vllm-tq"
-      save_env "CONTAINER" "vllm-qwen36-nvfp4-tq"
-      COMPOSE_FILE="${ROOT_DIR}/compose/nvfp4-turboquant.yml"
-      CONTAINER="vllm-qwen36-nvfp4-tq"
+    beellama-mtp-vision)
+      ENGINE="beellama-mtp-vision"
+      save_env "ENGINE" "beellama-mtp-vision"
+      save_env "CONTAINER" "beellama-qwopus-mtp-vision"
+      COMPOSE_FILE="${ROOT_DIR}/compose/beellama/qwopus-mtp-vision.yml"
+      CONTAINER="beellama-qwopus-mtp-vision"
       WEIGHTS_SUBDIR="$(get_weights_subdir)"
       echo ""
-      echo -e "${GREEN}✓ Switched to vLLM NVFP4 + TurboQuant 4-bit KV${NC}"
-      ;;
-    0)
-      return 0
-      ;;
-    *)
-      echo -e "${RED}Invalid choice${NC}"
-      return 1
+      echo -e "${GREEN}✓ Switched to Qwopus MTP Vision${NC}"
       ;;
   esac
 
   echo ""
   echo -e "  ${BOLD}Requirements:${NC}"
   case "$ENGINE" in
-    nvfp4-text-mtp|nvfp4-vision-mtp)
+    nvfp4-text-mtp|nvfp4-vision-mtp|nvfp4-vision-turboquant-mtp)
       echo -e "  - Weights: ${MODEL_DIR}/${WEIGHTS_SUBDIR}/"
       echo -e "  - Docker:  vllm/vllm-openai:v0.23.0"
       echo ""
       echo -e "  ${DIM}Download:${NC}"
       echo -e "    hf download ${HF_REPO} --local-dir ${MODEL_DIR}/${WEIGHTS_SUBDIR}"
       ;;
-    vllm-tq)
+    beellama|beellama-mtp-vision)
       echo -e "  - Weights: ${MODEL_DIR}/${WEIGHTS_SUBDIR}/"
-      echo -e "  - Docker:  vllm/vllm-openai:v0.23.0"
-      echo ""
-      echo -e "  ${DIM}Download:${NC}"
-      echo -e "    hf download sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP --local-dir ${MODEL_DIR}/qwen3.6-27b-nvfp4-mtp"
-      ;;
-    beellama)
-      echo -e "  - Weights: ${MODEL_DIR}/qwen3.6-27b-gguf/"
-      echo -e "    - unsloth-q5ks/Qwen3.6-27B-Q5_K_S.gguf"
-      echo -e "    - anbeeld-dflash-iq4xs/Qwen3.6-27B-DFlash-IQ4_XS.gguf"
-      echo -e "    - mmproj-F16.gguf"
       echo -e "  - Docker:  ghcr.io/anbeeld/beellama.cpp:server-cuda13-v0.3.1"
       echo ""
       echo -e "  ${DIM}Download:${NC}"
-      echo -e "    hf download unsloth/Qwen3.6-27B-GGUF --include 'unsloth-q5ks/*' --local-dir ${MODEL_DIR}/qwen3.6-27b-gguf"
-      echo -e "    hf download Anbeeld/Qwen3.6-27B-DFlash-GGUF --include 'anbeeld-dflash-iq4xs/*' --local-dir ${MODEL_DIR}/qwen3.6-27b-gguf"
-      echo -e "    hf download unsloth/Qwen3.6-27B-GGUF --include 'mmproj-F16.gguf' --local-dir ${MODEL_DIR}/qwen3.6-27b-gguf"
+      case "$ENGINE" in
+        beellama)
+          echo -e "    hf download unsloth/Qwen3.6-27B-GGUF --include 'unsloth-q5ks/*' --local-dir ${MODEL_DIR}/qwen3.6-27b-gguf"
+          echo -e "    hf download Anbeeld/Qwen3.6-27B-DFlash-GGUF --include 'anbeeld-dflash-iq4xs/*' --local-dir ${MODEL_DIR}/qwen3.6-27b-gguf"
+          echo -e "    hf download unsloth/Qwen3.6-27B-GGUF --include 'mmproj-F16.gguf' --local-dir ${MODEL_DIR}/qwen3.6-27b-gguf"
+          ;;
+        beellama-mtp-vision)
+          echo -e "    hf download Jackrong/Qwopus3.6-27B-Coder-MTP-GGUF --local-dir ${MODEL_DIR}/qwopus-3.6-27b-coder-mtp-gguf"
+          echo -e "    ${DIM}Fallback: modelscope download --model Jackrong/Qwopus3.6-27B-Coder-MTP-GGUF --include '*Q4_K_M*' --local-dir ${MODEL_DIR}/qwopus-3.6-27b-coder-mtp-gguf${NC}"
+          ;;
+      esac
       ;;
   esac
 
@@ -1251,6 +1288,7 @@ do_select_config() {
 
 
 do_configure_hermes() {
+  clear
   header
   echo -e "${BOLD}Configure Hermes for Local LLM${NC}"
   echo ""
@@ -1406,6 +1444,7 @@ PYEOF
 
 # ── Configure SOUL.md ─────────────────────────────────────────────────────────
 do_configure_soul() {
+  clear
   local soul_path="${HOME}/.hermes/SOUL.md"
 
   header

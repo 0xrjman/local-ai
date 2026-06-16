@@ -40,7 +40,7 @@ services:
       - ../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
       - ../cache/triton:/root/.triton/cache
       - ../cache/flashinfer:/root/.cache/flashinfer
-      - ${GENESIS_DIR:-../genesis/vllm/_genesis}:/vllm/_genesis:ro
+      - ${GENESIS_DIR:-../genesis/vllm/_genesis}:/usr/local/lib/python3.12/dist-packages/vllm/_genesis:ro
     environment:
       - NVIDIA_VISIBLE_DEVICES=${GPU_DEVICE:-0}
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}

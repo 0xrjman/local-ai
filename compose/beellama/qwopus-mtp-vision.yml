@@ -1,0 +1,74 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Beellama MTP Vision — Qwopus-3.6-27B-Coder-MTP-GGUF
+# ──────────────────────────────────────────────────────────────────────────────
+#
+# Engine:    beellama.cpp v0.3.1 (Anbeeld fork)
+# Model:     Qwopus-3.6-27B-Coder MTP GGUF (Jackrong)
+# Drafter:   MTP (built-in heads, draft=2)
+# KV cache:  q5_0 K + q4_1 V
+# Vision:    yes (mmproj)
+# Context:   262K (adjust via CTX_SIZE)
+# Port:      8020 → 8080
+#
+# ⚠ TIP: beellama.cpp is single-slot by design — NOT concurrent-friendly.
+#   Unlike vLLM which batches multiple requests into one GPU pass,
+#   beellama processes one request at a time. Concurrent requests
+#   are queued and processed sequentially. For high-throughput /
+#   multi-user scenarios, use vLLM-based configs instead.
+#
+# Weights (download via HF):
+#   Main:     qwopus-3.6-27b-coder-mtp-gguf/Qwopus-3.6-27B-Coder-MTP-Q5_K_M.gguf
+#   Vision:   qwopus-3.6-27b-coder-mtp-gguf/mmproj-qwen3.6-F16.gguf
+#
+# Model: https://huggingface.co/Jackrong/Qwopus3.6-27B-Coder-MTP-GGUF
+# Bench: ~100 t/s on RTX 5090 + MTP, SWE-bench Verified 67.0%
+#
+# Env overrides:
+#   MODEL_DIR      weights root           (default: ../models)
+#   GGUF_FILE      target model           (default: see above)
+#   MMPROJ_FILE    vision encoder          (default: see above)
+#   CTX_SIZE       context length          (default: 262144)
+#   PORT           host port               (default: 8020)
+#   NGL            GPU layers              (default: 999)
+#   REASONING      thinking gate           (default: on)
+#
+# ──────────────────────────────────────────────────────────────────────────────
+
+services:
+  beellama-qwopus-mtp-vision:
+    image: ${BEELLAMA_IMAGE:-ghcr.io/anbeeld/beellama.cpp:server-cuda13-v0.3.1}
+    container_name: "${ESTATE_CONTAINER:-beellama-qwopus-mtp-vision}"
+    restart: unless-stopped
+    ports:
+      - "${ESTATE_PORT:-${PORT:-8020}}:8080"
+    volumes:
+      - "${MODEL_DIR:-../models}:/models:ro"
+    environment:
+      - CUDA_MANAGED_FORCE_DEVICE_ALLOC=1
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${GPU_DEVICE:-0}"]
+              capabilities: [gpu]
+    command: >-
+      --host 0.0.0.0
+      --port 8080
+      --alias ${MODEL_ALIAS:-local}
+      -m /models/${GGUF_FILE:-qwopus-3.6-27b-coder-mtp-gguf/Qwopus3.6-27B-Coder-MTP-Q4_K_M.gguf}
+      --spec-type mtp
+      -ngl ${NGL:-999}
+      --ctx-size ${CTX_SIZE:-262144}
+      -b ${BATCH_SIZE:-4096}
+      -ub ${UBATCH_SIZE:-1024}
+      -np ${NP:-1}
+      --cache-type-k ${KV_TYPE_K:-q5_0}
+      --cache-type-v ${KV_TYPE_V:-q4_1}
+      --flash-attn on
+      --cache-ram 8192
+      --no-host
+      --jinja
+      --chat-template-file /models/qwopus-3.6-27b-coder-mtp-gguf/chat_template.jinja
+      --reasoning off
+      --mmproj /models/${MMPROJ_FILE:-qwopus-3.6-27b-coder-mtp-gguf/mmproj-F32.gguf}
