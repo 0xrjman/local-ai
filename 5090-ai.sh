@@ -9,6 +9,8 @@
 #   ./5090-ai.sh status       # show status
 #   ./5090-ai.sh logs         # tail logs
 #   ./5090-ai.sh bench        # run benchmark
+#   ./5090-ai.sh bench-concurrent  # concurrent throughput benchmark
+#   ./5090-ai.sh bench-scheduling  # scheduling latency benchmark
 #   ./5090-ai.sh config       # edit .env
 #   ./5090-ai.sh model        # show/set model path
 
@@ -32,27 +34,38 @@ if [[ -f "${ROOT_DIR}/.env" ]]; then
 fi
 
 # Engine selection (ENGINE may come from .env)
-ENGINE="${ENGINE:-nvfp4-text-mtp}"
+ENGINE="${ENGINE:-text-mtp}"
+# Map ENGINE → COMPOSE_FILE + default CONTAINER name.
+# NOTE: CONTAINER may later be overridden by .env; the compose file's
+# container_name: directive is the source of truth at runtime.
 case "$ENGINE" in
+  vision-mtp)
+    COMPOSE_FILE="${ROOT_DIR}/compose/vision-mtp.yml"
+    : "${CONTAINER:=vllm-vision-mtp}"
+    ;;
+  vision-tq-mtp)
+    COMPOSE_FILE="${ROOT_DIR}/compose/vision-tq-mtp.yml"
+    : "${CONTAINER:=vllm-vision-tq-mtp}"
+    ;;
   beellama)
     COMPOSE_FILE="${ROOT_DIR}/compose/beellama/dflash-vision.yml"
-    CONTAINER="${CONTAINER:-beellama-qwen36-27b-dflash-vision}"
+    : "${CONTAINER:=beellama-qwen36-27b-dflash-vision}"
     ;;
   beellama-mtp-vision)
     COMPOSE_FILE="${ROOT_DIR}/compose/beellama/qwopus-mtp-vision.yml"
-    CONTAINER="${CONTAINER:-beellama-qwopus-mtp-vision}"
+    : "${CONTAINER:=beellama-qwopus-mtp-vision}"
     ;;
-  nvfp4-vision-mtp)
-    COMPOSE_FILE="${ROOT_DIR}/compose/nvfp4-vision-mtp.yml"
-    CONTAINER="${CONTAINER:-vllm-nvfp4-vision-mtp}"
+  huihui-vision-mtp)
+    COMPOSE_FILE="${ROOT_DIR}/compose/huihui-vision-mtp.yml"
+    : "${CONTAINER:=vllm-huihui-vision-mtp}"
     ;;
-  nvfp4-vision-turboquant-mtp)
-    COMPOSE_FILE="${ROOT_DIR}/compose/nvfp4-vision-turboquant-mtp.yml"
-    CONTAINER="${CONTAINER:-vllm-nvfp4-vision-tq-mtp}"
+  huihui-vision-tq-mtp)
+    COMPOSE_FILE="${ROOT_DIR}/compose/huihui-vision-tq-mtp.yml"
+    : "${CONTAINER:=vllm-huihui-vision-tq-mtp}"
     ;;
-  nvfp4-text-mtp|*)
-    COMPOSE_FILE="${ROOT_DIR}/compose/nvfp4-text-mtp.yml"
-    CONTAINER="${CONTAINER:-vllm-qwen36-nvfp4-mtp}"
+  text-mtp|*)
+    COMPOSE_FILE="${ROOT_DIR}/compose/text-mtp.yml"
+    : "${CONTAINER:=vllm-text-mtp}"
     ;;
 esac
 
@@ -87,17 +100,39 @@ DIM=$'\033[2m'
 NC=$'\033[0m' # No Color
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
+
+# Find the actual running vLLM/beellama container name (if any).
+# Returns empty string if nothing is running.
+find_running_container() {
+  docker ps --format '{{.Names}}' --filter "name=vllm" --filter "name=beellama" 2>/dev/null | head -1
+}
+
 is_running() {
-  docker inspect "$CONTAINER" >/dev/null 2>&1 && \
-  [[ "$(docker inspect --format '{{.State.Running}}' "$CONTAINER" 2>/dev/null)" == "true" ]]
+  local actual
+  actual=$(find_running_container)
+  [[ -n "$actual" ]]
 }
 
 is_ready() {
   # Container running + API responding is sufficient
-  # (stale containers are stopped before starting, so port collision is unlikely)
-  docker inspect --format '{{.State.Running}}' "$CONTAINER" 2>/dev/null | grep -q true || return 1
+  local actual
+  actual=$(find_running_container)
+  [[ -n "$actual" ]] || return 1
   curl -sf "http://localhost:${PORT}/v1/models" >/dev/null 2>&1 || return 1
   return 0
+}
+
+# Return the name of the running container, or "$CONTAINER" if none.
+# Uses the config EXPECTED name ($CONTAINER) if it matches something running;
+# otherwise falls back to the actual running container name.
+resolve_container() {
+  local expected="$CONTAINER"
+  if docker inspect "$expected" >/dev/null 2>&1 && \
+     [[ "$(docker inspect --format '{{.State.Running}}' "$expected" 2>/dev/null)" == "true" ]]; then
+    echo "$expected"
+    return 0
+  fi
+  find_running_container || echo "$expected"
 }
 
 get_model_name() {
@@ -111,10 +146,11 @@ gpu_info() {
 
 config_label() {
   case "$ENGINE" in
-    aeon-vision-mtp)  echo "AEON-XS MTP (Vision)" ;;
-    nvfp4-text-mtp)  echo "NVFP4+MTP (Text)" ;;
-    nvfp4-vision-mtp)  echo "NVFP4+MTP (Vision)" ;;
-    nvfp4-vision-turboquant-mtp)  echo "NVFP4+MTP+TurboQuant (Vision)" ;;
+    vision-mtp)  echo "AEON-XS MTP (Vision)" ;;
+    vision-tq-mtp)  echo "AEON-XS MTP+TQ (Vision)" ;;
+    text-mtp)  echo "AEON-XS MTP (Text)" ;;
+    huihui-vision-mtp)  echo "Huihui NVFP4+MTP (Vision)" ;;
+    huihui-vision-tq-mtp)  echo "Huihui NVFP4+MTP+TQ (Vision)" ;;
     beellama)        echo "DFlash Vision" ;;
     beellama-mtp-vision)  echo "Qwopus MTP Vision" ;;
     *)               echo "$ENGINE" ;;
@@ -132,11 +168,11 @@ header() {
 
 status_line() {
   local actual_container
-  actual_container=$(docker ps --format "{{.Names}}" --filter "name=vllm" --filter "name=beellama" 2>/dev/null | head -1)
+  actual_container=$(find_running_container)
 
   echo -e "  Config:    ${BOLD}$(config_label)${NC} (${ENGINE})"
   echo -e "  Compose:   ${DIM}${COMPOSE_FILE}${NC}"
-  echo -e "  Container: ${DIM}${CONTAINER}${NC}"
+  echo -e "  Container: ${DIM}$(resolve_container)${NC}"
 
   if is_running; then
     if is_ready; then
@@ -146,13 +182,10 @@ status_line() {
     fi
     # Warn if running container differs from selected config
     if [[ -n "$actual_container" && "$actual_container" != "$CONTAINER" ]]; then
-      echo -e "  ${RED}! Mismatch: running container '${actual_container}' != selected '${CONTAINER}'${NC}"
+      echo -e "  ${RED}! Mismatch: running '${actual_container}' ≠ config '${CONTAINER}'${NC}"
     fi
   else
     echo -e "  Status:    ${DIM}o stopped${NC}"
-    if [[ -n "$actual_container" ]]; then
-      echo -e "  ${YELLOW}! Stale container found: ${actual_container}${NC}"
-    fi
   fi
   echo -e "  GPU:     $(gpu_info)"
   echo -e "  Models:  ${MODEL_DIR}"
@@ -162,10 +195,11 @@ status_line() {
 # ── Actions ──────────────────────────────────────────────────────────────────
 get_weights_subdir() {
   case "$ENGINE" in
-    nvfp4-text-mtp) echo "qwen3.6-27b-nvfp4-mtp" ;;
-    nvfp4-vision-mtp)  echo "huihui-qwen3.6-27b-abliterated-nvfp4-mtp" ;;
-    nvfp4-vision-turboquant-mtp)  echo "huihui-qwen3.6-27b-abliterated-nvfp4-mtp" ;;
-    aeon-vision-mtp)  echo "aeon-qwen3.6-27b-ultimate-nvfp4-mtp-xs" ;;
+    text-mtp) echo "aeon-qwen3.6-27b-ultimate-text-nvfp4-mtp-xs" ;;
+    huihui-vision-mtp)  echo "huihui-qwen3.6-27b-abliterated-nvfp4-mtp" ;;
+    huihui-vision-tq-mtp)  echo "huihui-qwen3.6-27b-abliterated-nvfp4-mtp" ;;
+    vision-mtp)  echo "aeon-qwen3.6-27b-ultimate-nvfp4-mtp-xs" ;;
+    vision-tq-mtp)  echo "aeon-qwen3.6-27b-ultimate-nvfp4-mtp-xs" ;;
     beellama-mtp-vision)  echo "qwopus-3.6-27b-coder-mtp-gguf" ;;
     beellama)       echo "qwen3.6-27b-gguf" ;;
     *)              echo "qwen3.6-27b-nvfp4-mtp" ;;
@@ -174,10 +208,11 @@ get_weights_subdir() {
 WEIGHTS_SUBDIR="$(get_weights_subdir)"
 get_hf_repo() {
   case "$ENGINE" in
-    aeon-vision-mtp)  echo "AEON-7/Qwen3.6-27B-AEON-Ultimate-Uncensored-Multimodal-NVFP4-MTP-XS" ;;
-    nvfp4-text-mtp) echo "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP" ;;
-    nvfp4-vision-mtp) echo "sakamakismile/Huihui-Qwen3.6-27B-abliterated-NVFP4-MTP" ;;
-    nvfp4-vision-turboquant-mtp) echo "sakamakismile/Huihui-Qwen3.6-27B-abliterated-NVFP4-MTP" ;;
+    vision-mtp)  echo "AEON-7/Qwen3.6-27B-AEON-Ultimate-Uncensored-Multimodal-NVFP4-MTP-XS" ;;
+    vision-tq-mtp)  echo "AEON-7/Qwen3.6-27B-AEON-Ultimate-Uncensored-Multimodal-NVFP4-MTP-XS" ;;
+    text-mtp) echo "AEON-7/Qwen3.6-27B-AEON-Ultimate-Uncensored-Text-NVFP4-MTP-XS" ;;
+    huihui-vision-mtp) echo "sakamakismile/Huihui-Qwen3.6-27B-abliterated-NVFP4-MTP" ;;
+    huihui-vision-tq-mtp) echo "sakamakismile/Huihui-Qwen3.6-27B-abliterated-NVFP4-MTP" ;;
     beellama-mtp-vision) echo "Jackrong/Qwopus3.6-27B-Coder-MTP-GGUF" ;;
     beellama)       echo "unsloth/Qwen3.6-27B-GGUF" ;;
     *)              echo "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP" ;;
@@ -194,10 +229,10 @@ prompt_weights() {
   echo -e "  Looking for: ${BOLD}${MODEL_DIR}/${WEIGHTS_SUBDIR}/${NC}"
   echo ""
   case "$ENGINE" in
-    aeon-vision-mtp)
+    vision-mtp|vision-tq-mtp)
       echo -e "  Model: ${BOLD}Qwen3.6-27B AEON Ultimate XS (abliterated + MTP)${NC}"
       ;;
-    nvfp4-vision-mtp)
+    huihui-vision-mtp|huihui-vision-tq-mtp)
       echo -e "  Model: ${BOLD}Qwen3.6-27B NVFP4 (Huihui abliterated + MTP)${NC}"
       ;;
     *)
@@ -434,8 +469,9 @@ do_up() {
   # ── Execute steps ─────────────────────────────────────────────
   # Pattern: run step -> mark ok/fail -> show progress (completed + current)
 
-  # 0: Already running?
-  if is_running; then
+  # 0: Already running?  Check expected container name only.
+  if docker inspect "$CONTAINER" >/dev/null 2>&1 && \
+     [[ "$(docker inspect --format '{{.State.Running}}' "$CONTAINER" 2>/dev/null)" == "true" ]]; then
     ok 0
     D[0]="$(get_model_name) on port ${PORT}"
     completed=1
@@ -556,7 +592,7 @@ do_up() {
     echo -e "  API: ${CYAN}http://localhost:${PORT}/v1${NC}"
     echo ""
     echo -e "  ${BOLD}──────── Container logs (live, Ctrl+C to return) ────────${NC}"
-    docker logs -f --tail 20 "$CONTAINER" 2>&1
+    docker logs -f --tail 20 "$(resolve_container)" 2>&1
     echo ""
     return 0
   else
@@ -582,6 +618,10 @@ _wait_for_ready_inline() {
   local bar_width=40
   local log_lines=8  # how many log lines to show
 
+  # Determine which container to watch (actual running one, or config name)
+  local cname
+  cname=$(resolve_container)
+
   # Pre-build bar cache
   local -a bc=()
   local i j
@@ -600,13 +640,13 @@ _wait_for_ready_inline() {
       return 0
     fi
 
-    # Check for crash
+    # Check for crash — use the actual container name for docker inspect
     local restart_count
-    restart_count=$(docker inspect --format '{{.RestartCount}}' "$CONTAINER" 2>/dev/null || echo "0")
+    restart_count=$(docker inspect --format '{{.RestartCount}}' "$cname" 2>/dev/null || echo "0")
     if (( restart_count > 2 )); then
       echo ""
       echo -e "  ${RED}✗ Container restarting in a loop!${NC}"
-      docker logs --tail 10 "$CONTAINER" 2>&1 | sed 's/^/    /'
+      docker logs --tail 10 "$cname" 2>&1 | sed 's/^/    /'
       return 1
     fi
 
@@ -640,7 +680,7 @@ _wait_for_ready_inline() {
         printf "  %.${line_width}s\n" "$line"
         (( line_idx++ ))
       fi
-    done < <(docker logs --tail "$log_lines" "$CONTAINER" 2>&1)
+    done < <(docker logs --tail "$log_lines" "$cname" 2>&1)
     # Pad remaining lines if docker output was short
     while (( line_idx < log_lines )); do
       echo ""
@@ -833,28 +873,21 @@ wait_for_ready_beellama() {
 do_down() {
   cd "$ROOT_DIR"
   echo -e "${YELLOW}x Stopping...${NC}"
-  if is_running; then
-    $COMPOSE_BIN -f "$COMPOSE_FILE" down 2>&1 || true
-    echo -e "${GREEN}✓ Stopped${NC}"
-  else
-    echo -e "${DIM}Already stopped${NC} (${CONTAINER})"
-  fi
 
-  # Also clean any stale containers from other configs
-  local stale_containers
-  stale_containers=$(docker ps -q --filter "name=vllm" --filter "name=beellama" 2>/dev/null || true)
-  if [[ -n "$stale_containers" ]]; then
-    local found_stale=false
-    for cid in $stale_containers; do
+  # Stop EVERY vLLM/beellama container — regardless of what $CONTAINER says.
+  # This handles config-mismatch cases cleanly.
+  local any
+  any=$(docker ps -q --filter "name=vllm" --filter "name=beellama" 2>/dev/null || true)
+  if [[ -n "$any" ]]; then
+    for cid in $any; do
       local cname
       cname=$(docker inspect -f '{{.Name}}' "$cid" 2>/dev/null | sed 's|^/||')
-      if [[ "$cname" != "$CONTAINER" ]]; then
-        found_stale=true
-        echo -e "${YELLOW}Cleaning stale container: ${cname}${NC}"
-        docker stop --time 5 "$cid" >/dev/null 2>&1 || true
-      fi
+      echo -e "  ${YELLOW}Stopping ${cname}${NC}"
+      docker stop --time 5 "$cid" >/dev/null 2>&1 || true
     done
-    $found_stale && echo -e "${GREEN}✓ Stale containers cleaned${NC}"
+    echo -e "${GREEN}✓ Stopped${NC}"
+  else
+    echo -e "${DIM}Already stopped${NC}"
   fi
 }
 
@@ -862,6 +895,7 @@ do_status() {
   local term_width
   term_width=$(tput cols 2>/dev/null || echo 100)
   local max_log_width=$(( term_width - 6 ))
+  local actual
 
   while true; do
     clear
@@ -869,8 +903,9 @@ do_status() {
     status_line
 
     if is_running; then
+      actual=$(resolve_container)
       echo -e "  ${BOLD}Container:${NC}"
-      docker stats "$CONTAINER" --no-stream --format "    CPU: {{.CPUPerc}}  MEM: {{.MemUsage}}  NET: {{.NetIO}}" 2>/dev/null || true
+      docker stats "$actual" --no-stream --format "    CPU: {{.CPUPerc}}  MEM: {{.MemUsage}}  NET: {{.NetIO}}" 2>/dev/null || true
       echo ""
 
       echo -e "  ${BOLD}GPU:${NC}"
@@ -880,7 +915,7 @@ do_status() {
       echo ""
 
       echo -e "  ${BOLD}Recent logs:${NC}"
-      docker logs --tail 8 "$CONTAINER" 2>&1 | sed 's/^/    /' | tail -8
+      docker logs --tail 8 "$actual" 2>&1 | sed 's/^/    /' | tail -8
     else
       echo -e "  ${YELLOW}Container not running${NC}"
     fi
@@ -892,12 +927,14 @@ do_status() {
 }
 
 do_logs() {
-  if ! is_running; then
+  local actual
+  actual=$(find_running_container)
+  if [[ -z "$actual" ]]; then
     echo -e "${RED}✗ Not running${NC}"
     return 1
   fi
   echo -e "${BLUE}[log] Logs (Ctrl+C to stop):${NC}"
-  docker logs -f --tail 50 "$CONTAINER"
+  docker logs -f --tail 50 "$actual"
 }
 
 do_bench() {
@@ -905,15 +942,21 @@ do_bench() {
     echo -e "${RED}✗ Server not ready${NC}"
     return 1
   fi
+  local actual
+  actual=$(resolve_container)
   echo ""
   echo -e "${BOLD}Benchmark mode:${NC}"
-  echo "  1) Sequential (single request latency)"
-  echo "  2) Concurrent  (throughput ceiling)"
+  echo "  1) Sequential       (single request latency)"
+  echo "  2) Concurrent       (throughput ceiling)"
+  echo "  3) Scheduling        (decode + new prefill overlap)"
+  echo "  4) Ctx Level Stress  (mixed context sizes, concurrent pairs)"
   echo ""
   read -rp "  Choice [1]: " bm_choice
   case "${bm_choice:-1}" in
-    2) CONTAINER="$CONTAINER" bash "${ROOT_DIR}/scripts/bench-concurrent.sh" ;;
-    *) CONTAINER="$CONTAINER" bash "${ROOT_DIR}/scripts/bench.sh" ;;
+    2) CONTAINER="$actual" bash "${ROOT_DIR}/scripts/bench-concurrent.sh" ;;
+    3) CONTAINER="$actual" bash "${ROOT_DIR}/scripts/bench-scheduling.sh" ;;
+    4) CONTAINER="$actual" bash "${ROOT_DIR}/scripts/bench-ctx-levels.sh" ;;
+    *) CONTAINER="$actual" bash "${ROOT_DIR}/scripts/bench.sh" ;;
   esac
 }
 
@@ -922,7 +965,29 @@ do_bench_concurrent() {
     echo -e "${RED}✗ Server not ready${NC}"
     return 1
   fi
-  CONTAINER="$CONTAINER" bash "${ROOT_DIR}/scripts/bench-concurrent.sh"
+  local actual
+  actual=$(resolve_container)
+  CONTAINER="$actual" bash "${ROOT_DIR}/scripts/bench-concurrent.sh"
+}
+
+do_bench_scheduling() {
+  if ! is_ready; then
+    echo -e "${RED}✗ Server not ready${NC}"
+    return 1
+  fi
+  local actual
+  actual=$(resolve_container)
+  CONTAINER="$actual" bash "${ROOT_DIR}/scripts/bench-scheduling.sh"
+}
+
+do_bench_ctx_levels() {
+  if ! is_ready; then
+    echo -e "${RED}✗ Server not ready${NC}"
+    return 1
+  fi
+  local actual
+  actual=$(resolve_container)
+  CONTAINER="$actual" bash "${ROOT_DIR}/scripts/bench-ctx-levels.sh"
 }
 
 do_config() {
@@ -1143,18 +1208,20 @@ do_install_hermes() {
 
 do_select_config() {
   local configs=(
-    "aeon-vision-mtp"
-    "nvfp4-text-mtp"
-    "nvfp4-vision-mtp"
-    "nvfp4-vision-turboquant-mtp"
+    "vision-mtp"
+    "vision-tq-mtp"
+    "text-mtp"
+    "huihui-vision-mtp"
+    "huihui-vision-tq-mtp"
     "beellama"
     "beellama-mtp-vision"
   )
   local labels=(
-    "Engine: vLLM · KV: fp8_e4m3 · Ctx: 256K · MTP3 · Vision · AEON-XS"
-    "Engine: vLLM · KV: fp8_e4m3 · Ctx: 219K · MTP3"
-    "Engine: vLLM · KV: fp8_e4m3 · Ctx: 209K · MTP3 · Vision"
-    "Engine: vLLM · KV: turboquant · Ctx: 320K · MTP3 · Vision · P5b+P67+PN8+PN32+PN34+P54+P59+P82"
+    "Engine: vLLM · KV: fp8_e4m3 · Ctx: 208K · MTP3 · Vision · AEON-XS"
+    "Engine: vLLM · KV: turboquant · Ctx: 324K · MTP3 · Vision · AEON-XS · Genesis"
+    "Engine: vLLM · KV: fp8_e4m3 · Ctx: 228K · MTP3 · Text · AEON-XS"
+    "Engine: vLLM · KV: fp8_e4m3 · Ctx: 208K · MTP3 · Vision · Huihui [deprecated]"
+    "Engine: vLLM · KV: turboquant · Ctx: 312K · MTP3 · Vision · P5b+P67+PN8+PN32+PN34+P54+P59+P82 · Huihui [deprecated]"
     "Engine: beellama.cpp · KV: q5_0/q4_1 · Ctx: 262K · DFlash · Vision"
     "Engine: beellama.cpp · MTP · Ctx: 262K · Q4_K_M · Vision · Coder · no-thinking"
   )
@@ -1170,15 +1237,21 @@ do_select_config() {
     echo ""
     echo -e "  ${DIM}Current: ${ENGINE}${NC}"
     echo ""
+    echo -e "  ${CYAN}★${NC} ${CYAN}production-ready${NC}  ·  ${DIM}dim = experimental${NC}"
+    echo ""
     echo -e "  ─────────────────────────────────────────────────────────────"
     echo ""
 
     for i in "${!configs[@]}"; do
+      local cfg="${configs[$i]}"
       if (( i == selected )); then
-        echo -e "  ${GREEN}${BOLD}▸ ${configs[$i]}${NC}"
+        echo -e "  ${GREEN}${BOLD}▸ ${cfg}${NC}"
         echo -e "     ${GREEN}${labels[$i]}${NC}"
+      elif [[ "$cfg" == aeon-* ]]; then
+        echo -e "  ${CYAN}  ${cfg}${NC} ${CYAN}★${NC}"
+        echo -e "     ${CYAN}${labels[$i]}${NC}"
       else
-        echo -e "    ${DIM}${configs[$i]}${NC}"
+        echo -e "    ${DIM}${cfg}${NC}"
         echo -e "     ${DIM}${labels[$i]}${NC}"
       fi
       echo ""
@@ -1213,45 +1286,55 @@ do_select_config() {
   local COMPOSE_FILE_OLD="$COMPOSE_FILE"
 
   case "$choice" in
-    aeon-vision-mtp)
-      ENGINE="aeon-vision-mtp"
-      save_env "ENGINE" "aeon-vision-mtp"
-      save_env "CONTAINER" "vllm-aeon-vision-mtp"
-      COMPOSE_FILE="${ROOT_DIR}/compose/aeon-vision-mtp.yml"
-      CONTAINER="vllm-aeon-vision-mtp"
+    vision-mtp)
+      ENGINE="vision-mtp"
+      save_env "ENGINE" "vision-mtp"
+      save_env "CONTAINER" "vllm-vision-mtp"
+      COMPOSE_FILE="${ROOT_DIR}/compose/vision-mtp.yml"
+      CONTAINER="vllm-vision-mtp"
       WEIGHTS_SUBDIR="$(get_weights_subdir)"
       echo ""
       echo -e "${GREEN}✓ Switched to AEON Ultimate XS NVFP4+MTP (Vision)${NC}"
       ;;
-    nvfp4-text-mtp)
-      ENGINE="nvfp4-text-mtp"
-      save_env "ENGINE" "nvfp4-text-mtp"
-      save_env "CONTAINER" "vllm-qwen36-nvfp4-mtp"
-      COMPOSE_FILE="${ROOT_DIR}/compose/nvfp4-text-mtp.yml"
-      CONTAINER="vllm-qwen36-nvfp4-mtp"
+    vision-tq-mtp)
+      ENGINE="vision-tq-mtp"
+      save_env "ENGINE" "vision-tq-mtp"
+      save_env "CONTAINER" "vllm-vision-tq-mtp"
+      COMPOSE_FILE="${ROOT_DIR}/compose/vision-tq-mtp.yml"
+      CONTAINER="vllm-vision-tq-mtp"
       WEIGHTS_SUBDIR="$(get_weights_subdir)"
       echo ""
-      echo -e "${GREEN}✓ Switched to vLLM NVFP4+MTP (Text)${NC}"
+      echo -e "${GREEN}✓ Switched to AEON Ultimate XS NVFP4+MTP+TurboQuant (Vision)${NC}"
       ;;
-    nvfp4-vision-mtp)
-      ENGINE="nvfp4-vision-mtp"
-      save_env "ENGINE" "nvfp4-vision-mtp"
-      save_env "CONTAINER" "vllm-nvfp4-vision-mtp"
-      COMPOSE_FILE="${ROOT_DIR}/compose/nvfp4-vision-mtp.yml"
-      CONTAINER="vllm-nvfp4-vision-mtp"
+    text-mtp)
+      ENGINE="text-mtp"
+      save_env "ENGINE" "text-mtp"
+      save_env "CONTAINER" "vllm-text-mtp"
+      COMPOSE_FILE="${ROOT_DIR}/compose/text-mtp.yml"
+      CONTAINER="vllm-text-mtp"
       WEIGHTS_SUBDIR="$(get_weights_subdir)"
       echo ""
-      echo -e "${GREEN}✓ Switched to vLLM NVFP4+MTP (Vision)${NC}"
+      echo -e "${GREEN}✓ Switched to AEON Ultimate XS NVFP4+MTP (Text)${NC}"
       ;;
-    nvfp4-vision-turboquant-mtp)
-      ENGINE="nvfp4-vision-turboquant-mtp"
-      save_env "ENGINE" "nvfp4-vision-turboquant-mtp"
-      save_env "CONTAINER" "vllm-nvfp4-vision-tq-mtp"
-      COMPOSE_FILE="${ROOT_DIR}/compose/nvfp4-vision-turboquant-mtp.yml"
-      CONTAINER="vllm-nvfp4-vision-tq-mtp"
+    huihui-vision-mtp)
+      ENGINE="huihui-vision-mtp"
+      save_env "ENGINE" "huihui-vision-mtp"
+      save_env "CONTAINER" "vllm-huihui-vision-mtp"
+      COMPOSE_FILE="${ROOT_DIR}/compose/huihui-vision-mtp.yml"
+      CONTAINER="vllm-huihui-vision-mtp"
       WEIGHTS_SUBDIR="$(get_weights_subdir)"
       echo ""
-      echo -e "${GREEN}✓ Switched to vLLM NVFP4+MTP+TurboQuant (Vision)${NC}"
+      echo -e "${GREEN}✓ Switched to Huihui NVFP4+MTP (Vision)${NC}"
+      ;;
+    huihui-vision-tq-mtp)
+      ENGINE="huihui-vision-tq-mtp"
+      save_env "ENGINE" "huihui-vision-tq-mtp"
+      save_env "CONTAINER" "vllm-huihui-vision-tq-mtp"
+      COMPOSE_FILE="${ROOT_DIR}/compose/huihui-vision-tq-mtp.yml"
+      CONTAINER="vllm-huihui-vision-tq-mtp"
+      WEIGHTS_SUBDIR="$(get_weights_subdir)"
+      echo ""
+      echo -e "${GREEN}✓ Switched to Huihui NVFP4+MTP+TQ (Vision)${NC}"
       ;;
     beellama)
       ENGINE="beellama"
@@ -1278,7 +1361,7 @@ do_select_config() {
   echo ""
   echo -e "  ${BOLD}Requirements:${NC}"
   case "$ENGINE" in
-    nvfp4-text-mtp|nvfp4-vision-mtp|nvfp4-vision-turboquant-mtp|aeon-vision-mtp)
+    text-mtp|huihui-vision-mtp|huihui-vision-tq-mtp|vision-mtp|vision-tq-mtp)
       echo -e "  - Weights: ${MODEL_DIR}/${WEIGHTS_SUBDIR}/"
       echo -e "  - Docker:  vllm/vllm-openai:v0.23.0"
       echo ""
@@ -1579,7 +1662,7 @@ draw_menu() {
     fi
   done
   echo ""
-  echo -e "  ${DIM}[↑↓] move  [Enter] select  [1-9/a-d] direct  [q/0] quit${NC}"
+  echo -e "  ${DIM}[↑↓] move  [Enter] select  [1-9/a-f] direct  [q/0] quit${NC}"
 }
 
 # ── Main ─────────────────────────────────────────────────────────────────────
@@ -1592,10 +1675,12 @@ if [[ $# -gt 0 ]]; then
     logs)         do_logs ;;
     bench|bench)  do_bench ;;
     bench-concurrent|bench-c)  do_bench_concurrent ;;
+    bench-scheduling|bench-s)  do_bench_scheduling ;;
+    bench-ctx-levels|bench-x)  do_bench_ctx_levels ;;
     test)         do_test ;;
     model)        do_model ;;
     config)       do_config ;;
-    *)            echo "Usage: $0 {up|down|status|logs|bench|bench-concurrent|test|model|config}"; exit 1 ;;
+    *)            echo "Usage: $0 {up|down|status|logs|bench|bench-concurrent|bench-scheduling|test|model|config}"; exit 1 ;;
   esac
   exit $?
 fi
@@ -1654,26 +1739,38 @@ while true; do
       read -rp "  Press Enter to continue..."
       need_clear=1
       ;;
-    a|A) # Key 'a' for 10th item (Install 5090-ai)
+    a|A) # Key 'a' for 10th item (Select Config)
       selected=9
       ${MENU_ACTIONS[$selected]}
       read -rp "  Press Enter to continue..."
       need_clear=1
       ;;
-    b|B) # Key 'b' for 11th item (Install Hermes)
+    b|B) # Key 'b' for 11th item (Config .env)
       selected=10
       ${MENU_ACTIONS[$selected]}
       read -rp "  Press Enter to continue..."
       need_clear=1
       ;;
-    c|C) # Key 'c' for 12th item (Configure Hermes for Local LLM)
+    c|C) # Key 'c' for 12th item (Install 5090-ai)
       selected=11
       ${MENU_ACTIONS[$selected]}
       read -rp "  Press Enter to continue..."
       need_clear=1
       ;;
-    d|D) # Key 'd' for 13th item (Configure SOUL.md)
+    d|D) # Key 'd' for 13th item (Install Hermes)
       selected=12
+      ${MENU_ACTIONS[$selected]}
+      read -rp "  Press Enter to continue..."
+      need_clear=1
+      ;;
+    e|E) # Key 'e' for 14th item (Configure Hermes)
+      selected=13
+      ${MENU_ACTIONS[$selected]}
+      read -rp "  Press Enter to continue..."
+      need_clear=1
+      ;;
+    f|F) # Key 'f' for 15th item (Configure SOUL.md)
+      selected=14
       ${MENU_ACTIONS[$selected]}
       read -rp "  Press Enter to continue..."
       need_clear=1

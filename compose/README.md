@@ -1,19 +1,27 @@
 # Compose Files
 
-## Available Engines
+## vLLM Configs (AEON-XS series — recommended)
 
-### vLLM NVFP4+MTP
-- File: `mtp.yml`
-- Model: Qwen3.6-27B NVFP4 (sakamakismile)
-- Engine: vLLM v0.23.0
-- Features: NVFP4, MTP n=3, fp8 KV, 224K ctx
+| File | KV Cache | Context | Vision | Notes |
+|---|---|---|---|---|
+| `text-mtp.yml` | fp8\_e4m3 | 228K | no | Text-only, fastest prefill |
+| `vision-mtp.yml` | fp8\_e4m3 | 208K | yes | Baseline vision |
+| `vision-tq-mtp.yml` | turboquant\_4bit\_nc | 324K | yes | Max context, Genesis patches + prealloc v2 |
 
-### Beellama DFlash Vision
-- File: `beellama/dflash-vision.yml`
-- Model: Qwen3.6-27B Q5_K_S GGUF
-- Engine: beellama.cpp (Anbeeld fork)
-- Features: DFlash spec-dec, vision (mmproj), 262K ctx
+## vLLM Configs (Huihui series — [deprecated])
+
+| File | KV Cache | Context | Vision | Notes |
+|---|---|---|---|---|
+| `huihui-vision-mtp.yml` | fp8\_e4m3 | 208K | yes | compressed-tensors quant |
+| `huihui-vision-tq-mtp.yml` | turboquant\_4bit\_nc | 312K | yes | All Genesis patches + prealloc v2 |
+
+## Beellama Configs
+
+| File | Draft | Context | Vision | Notes |
+|---|---|---|---|---|
+| `beellama/dflash-vision.yml` | DFlash IQ4\_XS | 262K | yes | Q5\_K\_S target |
+| `beellama/qwopus-mtp-vision.yml` | MTP draft=2 | 262K | yes | Qwopus coder, no-thinking |
 
 ## Usage
 
-Set COMPOSE_FILE env or use 5090-ai menu to switch engines.
+Set `COMPOSE_FILE` env or use `./5090-ai.sh` menu to switch engines.

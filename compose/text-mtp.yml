@@ -1,0 +1,112 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# vLLM ModelOpt+MTP — AEON Qwen3.6-27B Text NVFP4+MTP XS on RTX 5090
+#
+# Mode:      text-mtp
+#
+# Engine:    vLLM v0.23.0
+# Model:     AEON-7/Qwen3.6-27B-AEON-Ultimate-Uncensored-Text-NVFP4-MTP-XS
+#            (modelopt NVFP4, text-only, no vision)
+# Drafter:   MTP n=3 (grafted qwen3.5_mtp head, bf16)
+# KV cache:  fp8_e4m3 (Blackwell-native)
+# Vision:    no (--language-model-only)
+# Context:   228K tokens
+# Concurrency: 8 sequences
+# Perf mode: interactivity
+#
+# Weights:
+#   https://huggingface.co/AEON-7/Qwen3.6-27B-AEON-Ultimate-Uncensored-Text-NVFP4-MTP-XS
+#   ~20 GB (XS — GDN proj NVFP4), expects: $MODEL_DIR/aeon-qwen3.6-27b-ultimate-text-nvfp4-mtp-xs/
+#
+# Env overrides:
+#   MODEL_DIR         weights root            (default: ../models)
+#   MODEL_ALIAS       served model name       (default: local)
+#   MAX_MODEL_LEN     context length          (default: 233472)
+#   GPU_MEMORY_UTIL   VRAM fraction           (default: 0.96)
+#   SPEC_N_MAX        MTP draft tokens        (default: 3)
+#   MAX_NUM_SEQS      max concurrent          (default: 8)
+#   MAX_NUM_BATCHED   max batched tokens      (default: 4096)
+#   PORT              host port               (default: 8020)
+#   VLLM_IMAGE        Docker image            (default: vllm/vllm-openai:v0.23.0)
+#
+# ──────────────────────────────────────────────────────────────────────────────
+
+services:
+  vllm-text-mtp:
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.23.0}
+    container_name: "vllm-text-mtp"
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8020}:8000"
+    volumes:
+      - ${MODEL_DIR:-../models}:/root/.cache/huggingface
+      - ../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
+      - ../cache/triton:/root/.triton/cache
+      - ../cache/flashinfer:/root/.cache/flashinfer
+      - ../chat-templates/aeon-text/chat_template.jinja:/etc/qwen-chat-template.jinja:ro
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${GPU_DEVICE:-0}
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - VLLM_BUILD_COMMIT=
+      - VLLM_BUILD_PIPELINE=
+      - VLLM_BUILD_URL=
+      - VLLM_IMAGE_TAG=
+      - VLLM_NO_USAGE_STATS=1
+      - OMP_NUM_THREADS=1
+      - PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True,max_split_size_mb:512}
+      - VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
+      - VLLM_USE_FLASHINFER_SAMPLER=1
+      - VLLM_TEST_ENABLE_AOT_COMPILE=1
+      - TRITON_CACHE_DIR=/root/.triton/cache
+      - TRITON_COMPILE_BYTECODE=1
+      - CUDA_DEVICE_MAX_CONNECTIONS=8
+    shm_size: "16gb"
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${GPU_DEVICE:-0}"]
+              capabilities: [gpu]
+    command:
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --model
+      - /root/.cache/huggingface/aeon-qwen3.6-27b-ultimate-text-nvfp4-mtp-xs
+      - --served-model-name
+      - ${MODEL_ALIAS:-local}
+      - --quantization
+      - modelopt
+      - --dtype
+      - float16
+      - --tensor-parallel-size
+      - "1"
+      - --max-model-len
+      - "${MAX_MODEL_LEN:-233472}"
+      - --gpu-memory-utilization
+      - "${GPU_MEMORY_UTIL:-0.96}"
+      - --max-num-seqs
+      - "${MAX_NUM_SEQS:-8}"
+      - --max-num-batched-tokens
+      - "${MAX_NUM_BATCHED:-4096}"
+      - --kv-cache-dtype
+      - fp8_e4m3
+      - --trust-remote-code
+      - --reasoning-parser
+      - qwen3
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - qwen3_coder
+      - --chat-template
+      - /etc/qwen-chat-template.jinja
+      - --enable-prefix-caching
+      - --enable-chunked-prefill
+      - --speculative-config
+      - '{"method":"qwen3_5_mtp","num_speculative_tokens":${SPEC_N_MAX:-3}}'
+      - --language-model-only
+      - --skip-mm-profiling
+      - --performance-mode
+      - interactivity

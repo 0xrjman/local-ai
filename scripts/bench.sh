@@ -38,7 +38,7 @@ set -euo pipefail
 URL="${URL:-http://localhost:8020}"
 MODEL="${MODEL:-local}"
 CONTAINER="${CONTAINER:-vllm-qwen36-nvfp4-mtp}"
-RUNS="${RUNS:-3}"
+RUNS="${RUNS:-1}"
 WARMUPS="${WARMUPS:-1}"
 TEMPERATURE="${TEMPERATURE:-0.6}"
 TOP_P="${TOP_P:-0.95}"
@@ -47,7 +47,7 @@ SAVE_DIR="${SAVE_DIR:-${ROOT_DIR:-$(cd "$(dirname "$0")/.." && pwd)}/bench}"
 
 # Default tiers: prompt_tokens:output_tokens
 if [[ -z "${TIERS:-}" ]]; then
-  TIERS="1024:128 1024:512 1024:2048 10240:128 10240:512 10240:2048 51200:128 51200:512 102400:128 102400:512 184320:128 184320:512"
+  TIERS="1024:500 10240:500 51200:500 102400:500 184320:500"
 fi
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
@@ -185,7 +185,10 @@ def run_once(prompt, max_tokens, run_label=""):
     if ttft is None:
         ttft = wall  # degenerate case: empty response
     prefill_time = ttft
+    # If ttft was never detected (prefill_time == wall), use wall for decode too
     decode_time = max(wall - ttft, 1e-6)
+    if ttft >= wall * 0.99:  # ttft not properly detected, fall back to wall
+        decode_time = wall
     # Only compute TPS if we actually got tokens
     ct = max(completion_tokens, 1)
     return {
@@ -248,37 +251,18 @@ def scrape_metrics(tag):
 # ── Per-tier test ────────────────────────────────────────────────────────────
 def test_tier(prompt_tok, output_tok):
     print(f"\n{'─'*70}")
-    print(f"  Tier: {prompt_tok:>6,} prompt → {output_tok:>4,} output")
-    print(f"{'─'*70}")
-
     prompt = make_prompt(prompt_tok)
 
-    # Warmup
-    if WARMUPS > 0:
-        print(f"  Warmups ({WARMUPS}):")
-        for i in range(WARMUPS):
-            r = run_once(prompt, output_tok, f"warm-{i+1}")
-            if r.get("error"):
-                print(f"    warm-{i+1}  ✗ {r['error']}")
-            else:
-                print(f"    warm-{i+1}  ✓  prompt={r['prompt_tokens']:,}  output={r['completion_tokens']:,}  "
-                      f"TTFT={fmt_time(r['ttft'])}  decode={r['decode_tps']:.0f} TPS")
-
-    # Measured
-    print(f"\n  Measured ({RUNS}):")
     raw = []
+    for i in range(WARMUPS):
+        r = run_once(prompt, output_tok)
     for i in range(RUNS):
-        r = run_once(prompt, output_tok, f"run-{i+1}")
-        if r.get("error"):
-            print(f"    run-{i+1}  ✗ {r['error']}")
-            continue
-        raw.append(r)
-        print(f"    run-{i+1}  ✓  prompt={r['prompt_tokens']:,}  output={r['completion_tokens']:,}  "
-              f"TTFT={fmt_time(r['ttft'])}  prefill={r['prefill_tps']:,.0f} t/s  "
-              f"decode={r['decode_tps']:.1f} TPS  wall={r['wall_tps']:.1f} TPS")
+        r = run_once(prompt, output_tok)
+        if not r.get("error"):
+            raw.append(r)
 
     if not raw:
-        print("    (no successful runs)")
+        print(f"  {prompt_tok:>6,} prompt → {output_tok:>4,} output  ✗ ALL FAILED")
         return None
 
     # Aggregate
@@ -287,16 +271,15 @@ def test_tier(prompt_tok, output_tok):
               "prefill_tps", "decode_tps", "wall_tps"]:
         vals = [r[k] for r in raw]
         m[k] = {"mean": s.mean(vals), "stdev": s.stdev(vals) if len(vals) > 1 else 0}
-    m["prompt_tokens"] = raw[0]["prompt_tokens"]  # should be consistent
+    m["prompt_tokens"] = raw[0]["prompt_tokens"]
     m["completion_tokens"] = round(s.mean([r["completion_tokens"] for r in raw]))
     m["n"] = len(raw)
 
-    # Summary line
-    print(f"\n  → Result: TTFT={fmt_time(m['ttft']['mean'])}  "
-          f"prefill={m['prefill_tps']['mean']:,.0f} t/s  "
-          f"decode={m['decode_tps']['mean']:.1f} TPS  "
-          f"wall={m['wall_tps']['mean']:.1f} TPS  "
-          f"(n={m['n']})")
+    print(f"  {m['prompt_tokens']:>7,} tok → {output_tok:>4,} out  "
+          f"TTFT={fmt_time(m['ttft']['mean']):>7s}  "
+          f"prefill={m['prefill_tps']['mean']:>6,.0f} t/s  "
+          f"decode={m['decode_tps']['mean']:>6.1f} TPS  "
+          f"wall={m['wall_tps']['mean']:>6.1f} TPS")
     return m
 
 # ── Main ─────────────────────────────────────────────────────────────────────
@@ -322,7 +305,7 @@ if results:
         dec_s = f"{m['decode_tps']['mean']:.1f}"
         if m['decode_tps']['stdev'] > 0.5:
             dec_s += f"±{m['decode_tps']['stdev']:.1f}"
-        print(f"  {m['prompt_tok']:>8,}  {m['output_tok']:>7,}  {wall_s:>9s}  {dec_s:>11s}  "
+        print(f"  {m['prompt_tok']:>8,}→{m['prompt_tokens']:>8,}  {m['output_tok']:>7,}  {wall_s:>9s}  {dec_s:>11s}  "
               f"{fmt_time(m['ttft']['mean']):>9s}  {m['prefill_tps']['mean']:>10,.0f} t/s  {m['n']:>3d}")
 
     # Docker metrics (one line)
