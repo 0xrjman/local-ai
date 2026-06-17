@@ -84,9 +84,9 @@ export_vllm_vars() {
       export MAX_NUM_SEQS="${MAX_NUM_SEQS:-6}"
       export MAX_NUM_BATCHED="${MAX_NUM_BATCHED:-4096}"
       export KV_CACHE_DTYPE="turboquant_4bit_nc"
-      export GENESIS_PREALLOC_V2=1 GENESIS_P5B=1 GENESIS_P67=1 GENESIS_PN8=1
-      export GENESIS_PN34=1 GENESIS_P82=1 GENESIS_P98=1
-      export GENESIS_PN59=1 GENESIS_PN54=1 GENESIS_PN32=1
+      export GENESIS_PREALLOC_V2=1 GENESIS_P5B=1 GENESIS_P67=1
+      export GENESIS_PN34=1
+      # PN8, P82, P98, PN59, PN54, PN32 — disabled for debug
       ;;
     huihui-vision-mtp)
       export CONTAINER_NAME="vllm-huihui-vision-mtp"
