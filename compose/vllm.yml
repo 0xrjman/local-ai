@@ -1,0 +1,159 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# vLLM — unified compose (env-var-driven)
+#
+# Single compose file covering all AEON/Huihui text/vision + fp8/turboquant
+# combinations. Switch models/modes via env vars — no need for multiple files.
+#
+# Usage (via 5090-ai.sh menu):
+#   ./5090-ai.sh up
+#
+# Or manually:
+#   export CONTAINER_NAME=vllm-vision-mtp
+#   export MODEL_SUBDIR=aeon-qwen3.6-27b-ultimate-nvfp4-mtp-xs
+#   export QUANT_MODE=modelopt
+#   export MODALITY=vision
+#   export SPEC_CONFIG='{"method":"qwen3_5_mtp","num_speculative_tokens":3}'
+#   export CHAT_TEMPLATE_PATH=../chat-templates/aeon-vision/chat_template.jinja
+#   docker compose -f compose/vllm.yml up -d
+#
+# Env var reference:
+#   CONTAINER_NAME     container name                   (default: vllm)
+#   MODEL_DIR          weights root                     (default: ../models)
+#   MODEL_SUBDIR       model subdirectory               (required)
+#   MODEL_ALIAS        served model name                (default: local)
+#   QUANT_MODE         quantization backend             (default: modelopt)
+#   MODALITY           text | vision                    (default: vision)
+#   SPEC_CONFIG        speculative config JSON           (default: qwen3_5_mtp n=3)
+#   KV_CACHE_DTYPE     kv-cache-dtype                   (default: fp8_e4m3)
+#   MAX_MODEL_LEN      context length                   (default: 212992)
+#   GPU_MEMORY_UTIL    VRAM fraction                    (default: 0.94)
+#   MAX_NUM_SEQS       max concurrent                   (default: 8)
+#   MAX_NUM_BATCHED    max batched tokens               (default: 4096)
+#   PORT               host port                        (default: 8020)
+#   GPU_DEVICE         GPU index                        (default: 0)
+#   CHAT_TEMPLATE_PATH path to chat template jinja      (default: ../chat-templates/aeon-vision/chat_template.jinja)
+#   VLLM_IMAGE         Docker image                     (default: vllm/vllm-openai:v0.23.0)
+#   GENESIS_DIR        Genesis patches root             (default: ../genesis/vllm/_genesis)
+#   GENESIS_PREALLOC_V2  enable prealloc v2 recorder    (default: 0)
+#   GENESIS_P5B        enable Genesis P5B               (default: 0)
+#   GENESIS_P67        enable Genesis P67 TQ            (default: 0)
+#   GENESIS_PN8        enable Genesis PN8               (default: 0)
+#   GENESIS_PN34       enable Genesis PN34              (default: 0)
+#   GENESIS_P82        enable Genesis P82               (default: 0)
+#   GENESIS_P98        enable Genesis P98               (default: 0)
+#   GENESIS_PN59       enable Genesis PN59              (default: 0)
+#   GENESIS_PN54       enable Genesis PN54              (default: 0)
+#   GENESIS_PN32       enable Genesis PN32              (default: 0)
+# ──────────────────────────────────────────────────────────────────────────────
+
+services:
+  vllm:
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.23.0}
+    container_name: "${CONTAINER_NAME:-vllm}"
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8020}:8000"
+    volumes:
+      - ${GENESIS_DIR:-../genesis/vllm/_genesis}:/usr/local/lib/python3.12/dist-packages/vllm/_genesis:ro
+      - ${MODEL_DIR:-../models}:/root/.cache/huggingface
+      - ../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
+      - ../cache/triton:/root/.triton/cache
+      - ../cache/flashinfer:/root/.cache/flashinfer
+      - ../manifests/prealloc:/root/.cache/genesis/prealloc_v2
+      - ${CHAT_TEMPLATE_PATH:-../chat-templates/aeon-vision/chat_template.jinja}:/etc/qwen-chat-template.jinja:ro
+    environment:
+      # Genesis patches (gated by env vars — apply_all is no-op when all are 0)
+      - MODALITY=${MODALITY:-vision}
+      - GENESIS_ENABLE_PREALLOC_V2_RECORDER=${GENESIS_PREALLOC_V2:-0}
+      - GENESIS_PREALLOC_V2_CACHE_DIR=/root/.cache/genesis/prealloc_v2
+      - GENESIS_ENABLE_P5B=${GENESIS_P5B:-0}
+      - GENESIS_ENABLE_P67_TQ_MULTI_QUERY_KERNEL=${GENESIS_P67:-0}
+      - GENESIS_ENABLE_PN8_MTP_DRAFT_ONLINE_QUANT=${GENESIS_PN8:-0}
+      - GENESIS_ENABLE_PN34_WORKSPACE_LOCK_RELAX=${GENESIS_PN34:-0}
+      - GENESIS_ENABLE_P82=${GENESIS_P82:-0}
+      - GENESIS_ENABLE_P98=${GENESIS_P98:-0}
+      - GENESIS_ENABLE_PN59_STREAMING_GDN=${GENESIS_PN59:-0}
+      - GENESIS_ENABLE_PN54_GDN_CONTIGUOUS_DEDUP=${GENESIS_PN54:-0}
+      - GENESIS_ENABLE_PN32_GDN_CHUNKED_PREFILL=${GENESIS_PN32:-0}
+      # Standard vLLM env
+      - NVIDIA_VISIBLE_DEVICES=${GPU_DEVICE:-0}
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - VLLM_BUILD_COMMIT=
+      - VLLM_BUILD_PIPELINE=
+      - VLLM_BUILD_URL=
+      - VLLM_IMAGE_TAG=
+      - VLLM_NO_USAGE_STATS=1
+      - OMP_NUM_THREADS=1
+      - PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True,max_split_size_mb:512}
+      - VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
+      - VLLM_USE_FLASHINFER_SAMPLER=1
+      - VLLM_TEST_ENABLE_AOT_COMPILE=1
+      - TRITON_CACHE_DIR=/root/.triton/cache
+      - TRITON_COMPILE_BYTECODE=1
+      - CUDA_DEVICE_MAX_CONNECTIONS=8
+    shm_size: "16gb"
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${GPU_DEVICE:-0}"]
+              capabilities: [gpu]
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        # Apply Genesis patches if any are enabled
+        if [[ "$${GENESIS_P5B:-0}" != "0" || "$${GENESIS_P98:-0}" != "0" || \
+              "$${GENESIS_P67:-0}" != "0" || "$${GENESIS_PN8:-0}" != "0" || \
+              "$${GENESIS_PN34:-0}" != "0" || "$${GENESIS_P82:-0}" != "0" || \
+              "$${GENESIS_PN59:-0}" != "0" || "$${GENESIS_PN54:-0}" != "0" || \
+              "$${GENESIS_PN32:-0}" != "0" || "$${GENESIS_PREALLOC_V2:-0}" != "0" ]]; then
+          python3 -m vllm._genesis.patches.apply_all
+        fi
+        # Pass-through all args plus modality-specific flags
+        ARGS=("$$@")
+        if [[ "$${MODALITY:-vision}" == "text" ]]; then
+          ARGS+=(--language-model-only --skip-mm-profiling)
+        fi
+        exec vllm serve "$${ARGS[@]}"
+      - "--"
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --model
+      - /root/.cache/huggingface/${MODEL_SUBDIR}
+      - --served-model-name
+      - ${MODEL_ALIAS:-local}
+      - --quantization
+      - ${QUANT_MODE:-modelopt}
+      - --dtype
+      - float16
+      - --tensor-parallel-size
+      - "1"
+      - --max-model-len
+      - "${MAX_MODEL_LEN:-212992}"
+      - --gpu-memory-utilization
+      - "${GPU_MEMORY_UTIL:-0.94}"
+      - --max-num-seqs
+      - "${MAX_NUM_SEQS:-8}"
+      - --max-num-batched-tokens
+      - "${MAX_NUM_BATCHED:-4096}"
+      - --kv-cache-dtype
+      - ${KV_CACHE_DTYPE:-fp8_e4m3}
+      - --trust-remote-code
+      - --reasoning-parser
+      - qwen3
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - qwen3_coder
+      - --chat-template
+      - /etc/qwen-chat-template.jinja
+      - --enable-prefix-caching
+      - --enable-chunked-prefill
+      - --speculative-config
+      - ${SPEC_CONFIG:-{"method":"qwen3_5_mtp","num_speculative_tokens":3}}
+      - --performance-mode
+      - interactivity

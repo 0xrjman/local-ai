@@ -1,3 +1,6 @@
+# Generated per-config env (auto-written by 5090-ai.sh)
+compose/.env
+
 # Weights & secrets
 .env
 models/*

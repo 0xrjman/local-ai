@@ -1,27 +1,31 @@
 # Compose Files
 
-## vLLM Configs (AEON-XS series — recommended)
+## vLLM — Unified (`vllm.yml`)
 
-| File | KV Cache | Context | Vision | Notes |
+All vLLM configs use a single compose file driven by env vars:
+
+| Mode | Model | KV Cache | Context | Notes |
 |---|---|---|---|---|
-| `text-mtp.yml` | fp8\_e4m3 | 228K | no | Text-only, fastest prefill |
-| `vision-mtp.yml` | fp8\_e4m3 | 208K | yes | Baseline vision |
-| `vision-tq-mtp.yml` | turboquant\_4bit\_nc | 324K | yes | Max context, Genesis patches + prealloc v2 |
+| `text-mtp` | AEON-XS Text | fp8\_e4m3 | 228K | Text-only, fastest prefill |
+| `vision-mtp` | AEON-XS Vision | fp8\_e4m3 | 208K | Baseline vision |
+| `vision-tq-mtp` | AEON-XS Vision | turboquant | 324K | Max context, Genesis patches |
+| `huihui-vision-mtp` | Huihui Vision | fp8\_e4m3 | 208K | [deprecated] compressed-tensors |
+| `huihui-vision-tq-mtp` | Huihui Vision | turboquant | 312K | [deprecated] Genesis patches |
 
-## vLLM Configs (Huihui series — [deprecated])
-
-| File | KV Cache | Context | Vision | Notes |
-|---|---|---|---|---|
-| `huihui-vision-mtp.yml` | fp8\_e4m3 | 208K | yes | compressed-tensors quant |
-| `huihui-vision-tq-mtp.yml` | turboquant\_4bit\_nc | 312K | yes | All Genesis patches + prealloc v2 |
+**Add a new base model**: just add a case in `5090-ai.sh:export_vllm_vars()` — no new compose files needed.
 
 ## Beellama Configs
 
-| File | Draft | Context | Vision | Notes |
-|---|---|---|---|---|
-| `beellama/dflash-vision.yml` | DFlash IQ4\_XS | 262K | yes | Q5\_K\_S target |
-| `beellama/qwopus-mtp-vision.yml` | MTP draft=2 | 262K | yes | Qwopus coder, no-thinking |
+| File | Draft | Context | Vision |
+|---|---|---|---|
+| `beellama/dflash-vision.yml` | DFlash IQ4\_XS | 262K | yes |
+| `beellama/qwopus-mtp-vision.yml` | MTP draft=2 | 262K | yes |
 
 ## Usage
 
-Set `COMPOSE_FILE` env or use `./5090-ai.sh` menu to switch engines.
+Run `./5090-ai.sh` menu to switch configs, or:
+
+```bash
+# Switch
+ENGINE=vision-tq-mtp ./5090-ai.sh up
+```
