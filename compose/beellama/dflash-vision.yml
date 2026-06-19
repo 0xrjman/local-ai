@@ -11,7 +11,7 @@
 # Port:      8020 → 8080
 #
 # Weights:
-#   Target:  qwen3.6-27b-gguf/unsloth-q5ks/Qwen3.6-27B-Q5_K_S.gguf
+#   Target:  qwen3.6-27b-gguf/unsloth-mtp-q5ks/Qwen3.6-27B-Q5_K_S.gguf
 #   Draft:   qwen3.6-27b-gguf/anbeeld-dflash-iq4xs/Qwen3.6-27B-DFlash-IQ4_XS.gguf
 #   Vision:  qwen3.6-27b-gguf/mmproj-F16.gguf
 #
@@ -29,7 +29,7 @@
 
 services:
   beellama-qwen36-27b-dflash-vision:
-    image: ${BEELLAMA_IMAGE:-ghcr.io/anbeeld/beellama.cpp:server-cuda13-v0.3.1}
+    image: ${BEELLAMA_IMAGE:-ghcr.io/anbeeld/beellama.cpp:server-cuda13-v0.3.2}
     container_name: "${ESTATE_CONTAINER:-beellama-qwen36-27b-dflash-vision}"
     restart: unless-stopped
     ports:
@@ -38,11 +38,18 @@ services:
       - "${MODEL_DIR:-../models}:/models:ro"
     environment:
       - CUDA_MANAGED_FORCE_DEVICE_ALLOC=1
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${GPU_DEVICE:-0}"]
+              capabilities: [gpu]
     command: >-
       --host 0.0.0.0
       --port 8080
       --alias ${MODEL_ALIAS:-local}
-      -m /models/${GGUF_FILE:-qwen3.6-27b-gguf/unsloth-q5ks/Qwen3.6-27B-Q5_K_S.gguf}
+      -m /models/${GGUF_FILE:-qwen3.6-27b-gguf/unsloth-mtp-q5ks/Qwen3.6-27B-Q5_K_S.gguf}
       --spec-draft-model /models/${DRAFT_FILE:-qwen3.6-27b-gguf/anbeeld-dflash-iq4xs/Qwen3.6-27B-DFlash-IQ4_XS.gguf}
       --spec-type dflash
       --spec-dflash-cross-ctx ${CROSS_CTX:-1024}

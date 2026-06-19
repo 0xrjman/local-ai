@@ -36,7 +36,7 @@
 
 services:
   beellama-qwopus-mtp-vision:
-    image: ${BEELLAMA_IMAGE:-ghcr.io/anbeeld/beellama.cpp:server-cuda13-v0.3.1}
+    image: ${BEELLAMA_IMAGE:-ghcr.io/anbeeld/beellama.cpp:server-cuda13-v0.3.2}
     container_name: "${ESTATE_CONTAINER:-beellama-qwopus-mtp-vision}"
     restart: unless-stopped
     ports:
