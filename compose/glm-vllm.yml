@@ -75,7 +75,7 @@ services:
       - --dtype
       - float16
       - --tensor-parallel-size
-      - "4"
+      - "${TENSOR_PARALLEL_SIZE:-4}"
       - --max-model-len
       - "${MAX_MODEL_LEN:-1048576}"
       - --gpu-memory-utilization
