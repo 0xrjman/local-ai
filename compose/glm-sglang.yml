@@ -55,7 +55,7 @@ services:
       - "--port"
       - "8000"
       - "--tensor-parallel-size"
-      - "4"
+      - "${TENSOR_PARALLEL_SIZE:-4}"
       - "--quantization"
       - "${QUANT_MODE:-modelopt}"
       - "--kv-cache-dtype"
