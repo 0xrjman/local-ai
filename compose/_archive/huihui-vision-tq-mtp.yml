@@ -2,7 +2,7 @@
 # vLLM+HuiHui — Qwen3.6-27B (Huihui abliterated) + TurboQuant 4-bit KV
 # ──────────────────────────────────────────────────────────────────────────────
 #
-# Engine:    vLLM v0.23.0
+# Engine:    vLLM v0.24.0
 # Model:     Qwen3.6-27B NVFP4 (sakamakismile — Huihui abliterated + MTP)
 # Drafter:   MTP n=3 (embedded MTP head, bf16)
 # KV cache:  turboquant_4bit_nc (TurboQuant 4-bit, non-contiguous)
@@ -23,7 +23,7 @@
 #   SPEC_N_MAX        MTP draft tokens        (default: 3)
 #   MAX_NUM_SEQS      max concurrent          (default: 4)
 #   PORT              host port               (default: 8020)
-#   VLLM_IMAGE        Docker image            (default: vllm/vllm-openai:v0.23.0)
+#   VLLM_IMAGE        Docker image            (default: vllm/vllm-openai:v0.24.0)
 #
 # Genesis GDN patches: PN59 (streaming GDN orchestrator), PN54 (contiguous dedup),
 #   PN32 (chunked prefill v2) — Cliff 2/2b OOM mitigation
@@ -32,7 +32,7 @@
 
 services:
   vllm-huihui-vision-tq-mtp:
-    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.23.0}
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.24.0}
     container_name: "vllm-huihui-vision-tq-mtp"
     restart: unless-stopped
     ports:

@@ -3,7 +3,7 @@
 #
 # Mode:      text-mtp
 #
-# Engine:    vLLM v0.23.0
+# Engine:    vLLM v0.24.0
 # Model:     AEON-7/Qwen3.6-27B-AEON-Ultimate-Uncensored-Text-NVFP4-MTP-XS
 #            (modelopt NVFP4, text-only, no vision)
 # Drafter:   MTP n=3 (grafted qwen3.5_mtp head, bf16)
@@ -26,13 +26,13 @@
 #   MAX_NUM_SEQS      max concurrent          (default: 8)
 #   MAX_NUM_BATCHED   max batched tokens      (default: 4096)
 #   PORT              host port               (default: 8020)
-#   VLLM_IMAGE        Docker image            (default: vllm/vllm-openai:v0.23.0)
+#   VLLM_IMAGE        Docker image            (default: vllm/vllm-openai:v0.24.0)
 #
 # ──────────────────────────────────────────────────────────────────────────────
 
 services:
   vllm-text-mtp:
-    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.23.0}
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.24.0}
     container_name: "vllm-text-mtp"
     restart: unless-stopped
     ports:

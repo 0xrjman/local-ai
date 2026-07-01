@@ -32,7 +32,7 @@
 #   PORT               host port                        (default: 8020)
 #   GPU_DEVICE         GPU index                        (default: 0)
 #   CHAT_TEMPLATE_PATH path to chat template jinja      (default: ../chat-templates/aeon-vision/chat_template.jinja)
-#   VLLM_IMAGE         Docker image                     (default: vllm/vllm-openai:v0.23.0)
+#   VLLM_IMAGE         Docker image                     (default: vllm/vllm-openai:v0.24.0)
 #   GENESIS_DIR        Genesis patches root             (default: ../genesis/vllm/_genesis)
 #   GENESIS_PREALLOC_V2  enable prealloc v2 recorder    (default: 0)
 #   GENESIS_P5B        enable Genesis P5B               (default: 0)
@@ -48,7 +48,7 @@
 
 services:
   vllm:
-    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.23.0}
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.24.0}
     container_name: "${CONTAINER_NAME:-vllm}"
     restart: unless-stopped
     ports:

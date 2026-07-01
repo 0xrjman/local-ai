@@ -401,12 +401,11 @@ prompt_weights() {
       echo -e "    HF_ENDPOINT=https://hf-mirror.com ${hf_cmd} download ${HF_REPO} --local-dir ${MODEL_DIR}/${WEIGHTS_SUBDIR}"
       echo ""
 
-      # Run download with resume support
+      # Run download
       $hf_cmd download "$HF_REPO" \
-        --local-dir "${MODEL_DIR}/${WEIGHTS_SUBDIR}" \
-        --resume-download
-      
-      if [[ -f "${MODEL_DIR}/${WEIGHTS_SUBDIR}/model.safetensors" ]]; then
+        --local-dir "${MODEL_DIR}/${WEIGHTS_SUBDIR}"
+
+      if ls "${MODEL_DIR}/${WEIGHTS_SUBDIR}"/*.safetensors* >/dev/null 2>&1; then
         echo ""
         echo -e "${GREEN}✓ Download complete!${NC}"
         # Save to .env
@@ -446,7 +445,7 @@ prompt_weights() {
         save_env "MODEL_DIR" "$MODEL_DIR"
         echo -e "${GREEN}✓ Weights found! Saved to .env${NC}"
         return 0
-      elif [[ -f "${new_dir}/model.safetensors" || -n "$(ls "${new_dir}"/*.gguf 2>/dev/null)" ]]; then
+      elif ls "${new_dir}"/*.safetensors* >/dev/null 2>&1 || ls "${new_dir}"/*.gguf >/dev/null 2>&1; then
         # User entered the weights directory directly
         local actual_name
         actual_name="$(basename "$new_dir")"
@@ -631,13 +630,13 @@ do_up() {
       local wdir="${MODEL_DIR}/${WEIGHTS_SUBDIR}"
       ;;
   esac
-  if [[ -d "$wdir" ]] && [[ -f "${wdir}/model.safetensors" || -n "$(ls "${wdir}"/*.gguf 2>/dev/null)" ]]; then
+  if [[ -d "$wdir" ]] && (ls "$wdir"/*.safetensors* >/dev/null 2>&1 || ls "$wdir"/*.gguf >/dev/null 2>&1); then
     ok 3; D[3]="$wdir"
   else
     render_step 3
     if prompt_weights; then
       # Re-check after download/setup
-      if [[ -d "$wdir" ]] && [[ -f "${wdir}/model.safetensors" || -n "$(ls "${wdir}"/*.gguf 2>/dev/null)" ]]; then
+      if [[ -d "$wdir" ]] && (ls "$wdir"/*.safetensors* >/dev/null 2>&1 || ls "$wdir"/*.gguf >/dev/null 2>&1); then
         ok 3; D[3]="$wdir"
       else
         fail 3 "Weights still not found after setup"
@@ -1438,7 +1437,7 @@ do_select_config() {
   case "$ENGINE" in
     text-mtp|huihui-vision-mtp|huihui-vision-tq-mtp|vision-mtp|vision-tq-mtp)
       echo -e "  - Weights: ${MODEL_DIR}/${WEIGHTS_SUBDIR}/"
-      echo -e "  - Docker:  vllm/vllm-openai:v0.23.0"
+      echo -e "  - Docker:  vllm/vllm-openai:v0.24.0"
       echo ""
       echo -e "  ${DIM}Download:${NC}"
       echo -e "    hf download ${HF_REPO} --local-dir ${MODEL_DIR}/${WEIGHTS_SUBDIR}"

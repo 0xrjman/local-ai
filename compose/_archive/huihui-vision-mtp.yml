@@ -2,7 +2,7 @@
 # vLLM+HuiHui — Qwen3.6-27B (Huihui abliterated) on RTX 5090
 # ──────────────────────────────────────────────────────────────────────────────
 #
-# Engine:    vLLM v0.23.0
+# Engine:    vLLM v0.24.0
 # Model:     Qwen3.6-27B NVFP4 (sakamakismile — Huihui abliterated + MTP)
 # Drafter:   MTP n=3 (embedded MTP head, bf16)
 # KV cache:  fp8_e4m3 (Blackwell-native)
@@ -23,13 +23,13 @@
 #   SPEC_N_MAX        MTP draft tokens        (default: 3)
 #   MAX_NUM_SEQS      max concurrent          (default: 4)
 #   PORT              host port               (default: 8020)
-#   VLLM_IMAGE        Docker image            (default: vllm/vllm-openai:v0.23.0)
+#   VLLM_IMAGE        Docker image            (default: vllm/vllm-openai:v0.24.0)
 #
 # ──────────────────────────────────────────────────────────────────────────────
 
 services:
   vllm-huihui-vision-mtp:
-    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.23.0}
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.24.0}
     container_name: "vllm-huihui-vision-mtp"
     restart: unless-stopped
     ports:
