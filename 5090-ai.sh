@@ -40,6 +40,9 @@ fi
 
 export_vllm_vars() {
   local mode="$1"
+  # Load existing .env first so user-overridden values survive
+  local env_path="${ROOT_DIR}/compose/.env"
+  [[ -f "$env_path" ]] && source "$env_path" 2>/dev/null || true
   # Clear genesis patches first (leftover from previous config)
   export GENESIS_PREALLOC_V2=0 GENESIS_P5B=0 GENESIS_P67=0
   export GENESIS_PN8=0 GENESIS_PN34=0 GENESIS_P82=0 GENESIS_P98=0
