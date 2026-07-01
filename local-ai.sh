@@ -387,16 +387,23 @@ prompt_weights() {
     huihui-vision-mtp|huihui-vision-tq-mtp)
       echo -e "  Model: ${BOLD}Qwen3.6-27B NVFP4 (Huihui abliterated + MTP)${NC}"
       ;;
+    glm-5.2-vllm|glm-5.2-sglang)
+      echo -e "  Model: ${BOLD}NVIDIA GLM-5.2 NVFP4${NC}"
+      ;;
     *)
       echo -e "  Model: ${BOLD}Qwen3.6-27B-Text-NVFP4-MTP${NC}"
       ;;
   esac
-  echo -e "  Size:  ~21 GB (NVFP4 + GDN projections FP4)"
+  echo -e "  Size:  ~377 GB (753B MoE · 256 experts · NVFP4, 47 shards)"
   echo -e "  Link:  ${BLUE}${HF_URL}${NC}"
   echo ""
   echo -e "${BOLD}How would you like to proceed?${NC}"
   echo ""
-  echo -e "  ${BOLD}1)${NC} Download from HuggingFace (~19 GB)"
+  if [[ "$ENGINE" == glm-5.2-vllm || "$ENGINE" == glm-5.2-sglang ]]; then
+    echo -e "  ${BOLD}1)${NC} Download from HuggingFace (~377 GB, 47 shards, may take hours)"
+  else
+    echo -e "  ${BOLD}1)${NC} Download from HuggingFace (~19 GB)"
+  fi
   echo -e "  ${BOLD}2)${NC} Specify existing weights directory"
   echo -e "  ${BOLD}3)${NC} Symlink from another location"
   echo -e "  ${BOLD}0)${NC} Cancel"
