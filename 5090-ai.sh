@@ -120,6 +120,32 @@ export_vllm_vars() {
       export GENESIS_PN34=1 GENESIS_P82=1 GENESIS_P98=1
       export GENESIS_PN59=1 GENESIS_PN54=1 GENESIS_PN32=1
       ;;
+    glm-5.2-vllm)
+      export CONTAINER_NAME="vllm-glm-5.2"
+      export MODEL_SUBDIR="glm-5.2-nvfp4"
+      export QUANT_MODE="modelopt"
+      export MODALITY="text"
+      export SPEC_CONFIG=""
+      export CHAT_TEMPLATE_PATH="${ROOT_DIR}/chat-templates/glm-5.2/chat_template.jinja"
+      export MAX_MODEL_LEN="${MAX_MODEL_LEN:-1048576}"
+      export GPU_MEMORY_UTIL="${GPU_MEMORY_UTIL:-0.94}"
+      export MAX_NUM_SEQS="${MAX_NUM_SEQS:-8}"
+      export MAX_NUM_BATCHED="${MAX_NUM_BATCHED:-4096}"
+      export KV_CACHE_DTYPE="${KV_CACHE_DTYPE:-fp8_e4m3}"
+      ;;
+    glm-5.2-sglang)
+      export CONTAINER_NAME="sglang-glm-5.2"
+      export MODEL_SUBDIR="glm-5.2-nvfp4"
+      export QUANT_MODE="modelopt"
+      export MODALITY="text"
+      export SPEC_CONFIG=""
+      export CHAT_TEMPLATE_PATH=""
+      export MAX_MODEL_LEN="${MAX_MODEL_LEN:-1048576}"
+      export GPU_MEMORY_UTIL="${GPU_MEMORY_UTIL:-0.94}"
+      export MAX_NUM_SEQS="${MAX_NUM_SEQS:-8}"
+      export MAX_NUM_BATCHED="${MAX_NUM_BATCHED:-4096}"
+      export KV_CACHE_DTYPE="${KV_CACHE_DTYPE:-fp8_e4m3}"
+      ;;
   esac
 }
 
@@ -176,6 +202,17 @@ case "$ENGINE" in
     COMPOSE_FILE="${ROOT_DIR}/compose/beellama/qwopus-mtp-vision.yml"
     : "${CONTAINER:=beellama-qwopus-mtp-vision}"
     ;;
+  glm-5.2-vllm)
+    export_vllm_vars "$ENGINE"
+    COMPOSE_FILE="${ROOT_DIR}/compose/glm-vllm.yml"
+    save_compose_env
+    : "${CONTAINER:=${CONTAINER_NAME}}"
+    ;;
+  glm-5.2-sglang)
+    export_vllm_vars "$ENGINE"
+    COMPOSE_FILE="${ROOT_DIR}/compose/glm-sglang.yml"
+    : "${CONTAINER:=${CONTAINER_NAME}}"
+    ;;
   *)
     echo "Unknown engine: $ENGINE" >&2
     exit 1
@@ -215,7 +252,7 @@ NC=$'\033[0m' # No Color
 # Find the actual running vLLM/beellama container name (if any).
 # Returns empty string if nothing is running.
 find_running_container() {
-  docker ps --format '{{.Names}}' --filter "name=vllm" --filter "name=beellama" 2>/dev/null | head -1 || true
+  docker ps --format '{{.Names}}' --filter "name=vllm" --filter "name=beellama" --filter "name=sglang" 2>/dev/null | head -1 || true
 }
 
 is_running() {
@@ -264,6 +301,8 @@ config_label() {
     huihui-vision-tq-mtp)  echo "Huihui NVFP4+MTP+TQ (Vision)" ;;
     beellama-dflash-vision)        echo "DFlash Vision" ;;
     beellama-qwopus-mtp)  echo "Qwopus MTP Vision" ;;
+    glm-5.2-vllm)  echo "GLM-5.2 NVFP4 · vLLM" ;;
+    glm-5.2-sglang)  echo "GLM-5.2 NVFP4 · SGLang" ;;
     *)               echo "$ENGINE" ;;
   esac
 }
@@ -313,6 +352,7 @@ get_weights_subdir() {
     vision-tq-mtp)  echo "aeon-qwen3.6-27b-ultimate-nvfp4-mtp-xs" ;;
     beellama-qwopus-mtp)  echo "qwopus-3.6-27b-coder-mtp-gguf" ;;
     beellama-dflash-vision)       echo "qwen3.6-27b-gguf" ;;
+    glm-5.2-vllm|glm-5.2-sglang)  echo "glm-5.2-nvfp4" ;;
     *)              echo "qwen3.6-27b-nvfp4-mtp" ;;
   esac
 }
@@ -326,6 +366,7 @@ get_hf_repo() {
     huihui-vision-tq-mtp) echo "sakamakismile/Huihui-Qwen3.6-27B-abliterated-NVFP4-MTP" ;;
     beellama-qwopus-mtp) echo "Jackrong/Qwopus3.6-27B-Coder-MTP-GGUF" ;;
     beellama-dflash-vision)       echo "unsloth/Qwen3.6-27B-GGUF" ;;
+    glm-5.2-vllm|glm-5.2-sglang)  echo "nvidia/GLM-5.2-NVFP4" ;;
     *)              echo "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP" ;;
   esac
 }
@@ -656,7 +697,7 @@ do_up() {
   show_progress 4
   local stale_count=0
   local stale_containers
-  stale_containers=$(docker ps -q --filter "name=vllm" --filter "name=beellama" 2>/dev/null || true)
+  stale_containers=$(docker ps -q --filter "name=vllm" --filter "name=beellama" --filter "name=sglang" 2>/dev/null || true)
   if [[ -n "$stale_containers" ]]; then
     local my_cid
     my_cid=$(docker inspect -f '{{.Id}}' "$CONTAINER" 2>/dev/null || true)
@@ -992,7 +1033,7 @@ do_down() {
   # Stop EVERY vLLM/beellama container — regardless of what $CONTAINER says.
   # This handles config-mismatch cases cleanly.
   local any
-  any=$(docker ps -q --filter "name=vllm" --filter "name=beellama" 2>/dev/null || true)
+  any=$(docker ps -q --filter "name=vllm" --filter "name=beellama" --filter "name=sglang" 2>/dev/null || true)
   if [[ -n "$any" ]]; then
     for cid in $any; do
       local cname
@@ -1330,6 +1371,8 @@ do_select_config() {
     "huihui-vision-tq-mtp"
     "beellama-dflash-vision"
     "beellama-qwopus-mtp"
+    "glm-5.2-vllm"
+    "glm-5.2-sglang"
   )
   local labels=(
     "Engine: vLLM · KV: fp8_e4m3 · Ctx: 208K · MTP3 · Vision · AEON-XS"
@@ -1339,6 +1382,8 @@ do_select_config() {
     "Engine: vLLM · KV: turboquant · Ctx: 312K · MTP3 · Vision · P5b+P67+PN8+PN32+PN34+P54+P59+P82 · Huihui [deprecated]"
     "Engine: beellama.cpp · KV: q5_0/q4_1 · Ctx: 262K · DFlash · Vision"
     "Engine: beellama.cpp · MTP · Ctx: 262K · Q4_K_M · Vision · Coder · no-thinking"
+    "Engine: vLLM v0.24.0 · TP4 · 753B NVFP4 · 1M Ctx · GLM-5.2"
+    "Engine: SGLang v0.5.14 · TP4 · 753B NVFP4 · 1M Ctx · GLM-5.2"
   )
   local selected=0
   local config_count=${#configs[@]}
@@ -1433,6 +1478,22 @@ do_select_config() {
       echo ""
       echo -e "${GREEN}✓ Switched to Qwopus MTP Vision${NC}"
       ;;
+    glm-5.2-vllm|glm-5.2-sglang)
+      ENGINE="$choice"
+      save_env "ENGINE" "$choice"
+      export_vllm_vars "$choice"
+      save_env "CONTAINER" "${CONTAINER_NAME}"
+      if [[ "$choice" == "glm-5.2-vllm" ]]; then
+        save_compose_env
+        COMPOSE_FILE="${ROOT_DIR}/compose/glm-vllm.yml"
+      else
+        COMPOSE_FILE="${ROOT_DIR}/compose/glm-sglang.yml"
+      fi
+      CONTAINER="${CONTAINER_NAME}"
+      WEIGHTS_SUBDIR="$(get_weights_subdir)"
+      echo ""
+      echo -e "${GREEN}✓ Switched to $(config_label)${NC}"
+      ;;
   esac
 
   echo ""
@@ -1463,6 +1524,20 @@ do_select_config() {
           ;;
       esac
       ;;
+    glm-5.2-vllm)
+      echo -e "  - Weights: ${MODEL_DIR}/${WEIGHTS_SUBDIR}/ (47 shards, ~377 GB)"
+      echo -e "  - Docker:  vllm/vllm-openai:v0.24.0 · TP=4 · GPU 0-3"
+      echo ""
+      echo -e "  ${DIM}Download:${NC}"
+      echo -e "    hf download nvidia/GLM-5.2-NVFP4 --local-dir ${MODEL_DIR}/${WEIGHTS_SUBDIR}"
+      ;;
+    glm-5.2-sglang)
+      echo -e "  - Weights: ${MODEL_DIR}/${WEIGHTS_SUBDIR}/ (47 shards, ~377 GB)"
+      echo -e "  - Docker:  lmsysorg/sglang:v0.5.14 · TP=4 · GPU 0-3"
+      echo ""
+      echo -e "  ${DIM}Download:${NC}"
+      echo -e "    hf download nvidia/GLM-5.2-NVFP4 --local-dir ${MODEL_DIR}/${WEIGHTS_SUBDIR}"
+      ;;
   esac
 
   # Auto-restart if server is running
@@ -1472,7 +1547,7 @@ do_select_config() {
     $COMPOSE_BIN -f "$COMPOSE_FILE_OLD" down 2>/dev/null || true
     # Stop any other containers (dynamic — catches all vllm/beellama)
     local stale_containers
-    stale_containers=$(docker ps -q --filter "name=vllm" --filter "name=beellama" 2>/dev/null || true)
+    stale_containers=$(docker ps -q --filter "name=vllm" --filter "name=beellama" --filter "name=sglang" 2>/dev/null || true)
     if [[ -n "$stale_containers" ]]; then
       local my_cid
       my_cid=$(docker inspect -f '{{.Id}}' "$CONTAINER" 2>/dev/null || true)

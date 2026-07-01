@@ -1,0 +1,93 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# GLM-5.2 NVFP4 — vLLM (env-var-driven)
+#
+# Usage (via 5090-ai.sh menu):
+#   ./5090-ai.sh config  →  select "glm-5.2-vllm"
+#   ./5090-ai.sh up
+#
+# Env var reference:
+#   CONTAINER_NAME     container name                   (default: vllm-glm-5.2)
+#   MODEL_DIR          weights root                     (default: ../models)
+#   MODEL_SUBDIR       model subdirectory               (required)
+#   MODEL_ALIAS        served model name                (default: local)
+#   QUANT_MODE         quantization backend             (default: modelopt)
+#   KV_CACHE_DTYPE     kv-cache-dtype                   (default: fp8_e4m3)
+#   MAX_MODEL_LEN      context length                   (default: 1048576)
+#   GPU_MEMORY_UTIL    VRAM fraction                    (default: 0.94)
+#   MAX_NUM_SEQS       max concurrent                   (default: 8)
+#   MAX_NUM_BATCHED    max batched tokens               (default: 4096)
+#   PORT               host port                        (default: 8030)
+#   GPU_DEVICE         GPU indices for TP=4             (default: 0,1,2,3)
+#   CHAT_TEMPLATE_PATH path to chat template jinja
+#   VLLM_IMAGE         Docker image                     (default: vllm/vllm-openai:v0.24.0)
+# ──────────────────────────────────────────────────────────────────────────────
+
+services:
+  vllm:
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.24.0}
+    container_name: "${CONTAINER_NAME:-vllm-glm-5.2}"
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8030}:8000"
+    volumes:
+      - ${MODEL_DIR:-../models}:/root/.cache/huggingface
+      - ../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
+      - ../cache/triton:/root/.triton/cache
+      - ../cache/flashinfer:/root/.cache/flashinfer
+      - ${CHAT_TEMPLATE_PATH:-../chat-templates/glm-5.2/chat_template.jinja}:/etc/glm-chat-template.jinja:ro
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${GPU_DEVICE:-0,1,2,3}
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - VLLM_NO_USAGE_STATS=1
+      - OMP_NUM_THREADS=1
+      - PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True,max_split_size_mb:512}
+      - VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
+      - VLLM_USE_FLASHINFER_SAMPLER=1
+      - VLLM_TEST_ENABLE_AOT_COMPILE=1
+      - TRITON_CACHE_DIR=/root/.triton/cache
+      - TRITON_COMPILE_BYTECODE=1
+      - CUDA_DEVICE_MAX_CONNECTIONS=8
+    shm_size: "16gb"
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${GPU_DEVICE:-0,1,2,3}"]
+              capabilities: [gpu]
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        exec vllm serve "$$@"
+      - "--"
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --model
+      - /root/.cache/huggingface/${MODEL_SUBDIR}
+      - --served-model-name
+      - ${MODEL_ALIAS:-local}
+      - --quantization
+      - ${QUANT_MODE:-modelopt}
+      - --dtype
+      - float16
+      - --tensor-parallel-size
+      - "4"
+      - --max-model-len
+      - "${MAX_MODEL_LEN:-1048576}"
+      - --gpu-memory-utilization
+      - "${GPU_MEMORY_UTIL:-0.94}"
+      - --max-num-seqs
+      - "${MAX_NUM_SEQS:-8}"
+      - --max-num-batched-tokens
+      - "${MAX_NUM_BATCHED:-4096}"
+      - --kv-cache-dtype
+      - ${KV_CACHE_DTYPE:-fp8_e4m3}
+      - --trust-remote-code
+      - --chat-template
+      - /etc/glm-chat-template.jinja
+      - --enable-prefix-caching
+      - --enable-chunked-prefill
