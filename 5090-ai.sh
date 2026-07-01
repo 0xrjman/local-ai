@@ -212,7 +212,7 @@ NC=$'\033[0m' # No Color
 # Find the actual running vLLM/beellama container name (if any).
 # Returns empty string if nothing is running.
 find_running_container() {
-  docker ps --format '{{.Names}}' --filter "name=vllm" --filter "name=beellama" 2>/dev/null | head -1
+  docker ps --format '{{.Names}}' --filter "name=vllm" --filter "name=beellama" 2>/dev/null | head -1 || true
 }
 
 is_running() {
