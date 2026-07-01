@@ -153,6 +153,7 @@ EOF
 
 # Engine selection (ENGINE may come from .env)
 ENGINE="${ENGINE:-text-mtp}"
+MODEL_DIR="${MODEL_DIR:-${ROOT_DIR}/models}"
 # Map ENGINE → COMPOSE_FILE + default CONTAINER name.
 # NOTE: CONTAINER may later be overridden by .env; the compose file's
 # container_name: directive is the source of truth at runtime.
@@ -177,8 +178,6 @@ case "$ENGINE" in
     exit 1
     ;;
 esac
-
-MODEL_DIR="${MODEL_DIR:-${ROOT_DIR}/models}"
 
 # Save env variable to .env in repo directory
 save_env() {
