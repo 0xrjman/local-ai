@@ -1,9 +1,9 @@
 # ──────────────────────────────────────────────────────────────────────────────
 # GLM-5.2 NVFP4 — vLLM (env-var-driven)
 #
-# Usage (via 5090-ai.sh menu):
-#   ./5090-ai.sh config  →  select "glm-5.2-vllm"
-#   ./5090-ai.sh up
+# Usage (via local-ai.sh menu):
+#   ./local-ai.sh config  →  select "glm-5.2-vllm"
+#   ./local-ai.sh up
 #
 # Env var reference:
 #   CONTAINER_NAME     container name                   (default: vllm-glm-5.2)

@@ -3,7 +3,7 @@
 ## vLLM — Unified (`vllm.yml`)
 
 All vLLM configs use a single compose file driven by env vars.
-Set via `5090-ai.sh` menu (`./5090-ai.sh`), which calls `export_vllm_vars()`.
+Set via `local-ai.sh` menu (`./local-ai.sh`), which calls `export_vllm_vars()`.
 
 | Mode | Model | KV Cache | Context | Genesis | Notes |
 |---|---|---|---|---|---|
@@ -13,7 +13,7 @@ Set via `5090-ai.sh` menu (`./5090-ai.sh`), which calls `export_vllm_vars()`.
 | `huihui-vision-mtp` | Huihui Vision | fp8_e4m3 | 208K | — | [deprecated] |
 | `huihui-vision-tq-mtp` | Huihui Vision | turboquant | 312K | all 10 | [deprecated] |
 
-**Add a new base model**: just add a `case` in `5090-ai.sh:export_vllm_vars()` — no new compose files needed.
+**Add a new base model**: just add a `case` in `local-ai.sh:export_vllm_vars()` — no new compose files needed.
 
 ### Legacy compose files
 
@@ -33,10 +33,10 @@ Separate compose files (separate engine, not part of unified vllm.yml).
 
 ```bash
 # Interactive menu
-./5090-ai.sh
+./local-ai.sh
 
 # Direct mode switch
-ENGINE=vision-tq-mtp ./5090-ai.sh up
+ENGINE=vision-tq-mtp ./local-ai.sh up
 
 # Or manually with docker compose (requires env vars set)
 docker compose -f compose/vllm.yml up -d

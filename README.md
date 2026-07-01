@@ -1,151 +1,129 @@
-# 5090-ai
+# local-ai 🚀
 
-Standalone AI server management for **RTX 5090** — vLLM with NVFP4+MTP+TurboQuant, beellama.cpp, and more.
+Multi-engine LLM serving for **NVIDIA RTX 5090**, **1–8× B200** — AEON, Huihui, GLM-5.2, Beellama.
+
+```bash
+git clone https://github.com/0xrjman/local-ai && cd local-ai
+./local-ai.sh
+```
 
 ## Quick Start
 
-```bash
-git clone https://github.com/0xrjman/5090-ai && cd 5090-ai
-./5090-ai.sh
-```
+```text
+┌────────────────────────────────────────────────────────┐
+│  local-ai  ·  AEON-XS MTP (Vision)                    │
+│  RTX 5090                                             │
+└────────────────────────────────────────────────────────┘
 
-Select a mode and start.
-
-## Menu
-
-```
-╔══════════════════════════════════════════════════════════╗
-║  5090-ai  ·  NVFP4+MTP  ·  RTX 5090                   ║
-╚══════════════════════════════════════════════════════════╝
-
-  Config: vision-tq-mtp  |  Container: vllm-vision-tq-mtp
+  Config:    AEON-XS MTP (Vision) (vision-mtp)
+  Compose:   /home/yubo/ryan/local-ai/compose/vllm.yml
+  Container: vllm-vision-mtp
+  Status:    o stopped
+  GPU:     0, NVIDIA B200, 0 MiB, 183359 MiB
+  Models:  /home/yubo/ryan/local-ai/models
 
   ▸ [1] >  Start server
     [2] x  Stop server
     [3] o  Status
-    [4] [log] Logs (tail -f)
-    [5] [bench] Benchmark
-    [6] [test] Test request
-    [7] [model] Model info
-    [8] [config] Select Config
-    [9] [cfg]  Config (.env)
-    [a] [install] Install 5090-ai to system
-    [b] [hermes] Install Hermes Agent
-    [c] [hermes-cfg] Configure Hermes for Local LLM
-
-  [↑↓] move  [Enter] select  [1-9/a/b/c] direct  [q/ESC] quit
+    ...
+    [a] [install] Install local-ai to system
 ```
 
-## Modes
+## Engine Configurations
 
-All vLLM modes use a **single unified compose file** (`compose/vllm.yml`) driven by env vars. Switch modes in the TUI menu or directly:
+Access via `./local-ai.sh config` or set `ENGINE=... ./local-ai.sh up`.
+
+| # | Engine | GPU | VRAM/GPU | Context | Notes |
+|---|--------|-----|----------|---------|-------|
+| 1 | **AEON-XS MTP (Vision)** 🟢 | 1 × 5090/B200 | ~170 GB | 208K | FP8 KV · MTP3 · Qwen3.6-27B |
+| 2 | **AEON-XS MTP+TQ (Vision)** | 1 × B200 | ~170 GB | 324K | TurboQuant KV · Genesis patches |
+| 3 | **AEON-XS MTP (Text)** 🟢 | 1 × 5090/B200 | ~170 GB | 228K | Text-only, lower VRAM |
+| 4 | **Huihui NVFP4+MTP (Vision)** | 1 × B200 | ~170 GB | 208K | Abliterated variant [deprecated] |
+| 5 | **Huihui NVFP4+MTP+TQ (Vision)** | 1 × B200 | ~170 GB | 312K | Full Genesis [deprecated] |
+| 6 | **Beellama DFlash Vision** | 1 × 5090/B200 | ~24 GB | 262K | GGUF · iMatrix |
+| 7 | **Beellama Qwopus MTP Vision** | 1 × 5090/B200 | ~24 GB | 262K | GGUF · MTP · Coder |
+| 8 | **GLM-5.2 NVFP4 · vLLM** 🆕 | **4 × B200** | ~94 GB | **1M** | 753B MoE · 256 experts · TP=4 |
+| 9 | **GLM-5.2 NVFP4 · SGLang** 🆕 | **4 × B200** | ~94 GB | **1M** | SGLang v0.5.14 · TP=4 |
+
+> 🟢 = production-ready  ·  🆕 = newly added
+
+## Hardware Matrix
+
+| Hardware | Configs | Notes |
+|----------|---------|-------|
+| **RTX 5090** (32 GB) | #6, #7 | GGUF quantized models only |
+| **1 × B200** (179 GB) | #1–#5 | Full NVFP4 + MTP |
+| **4 × B200** (716 GB) | #8, #9 | GLM-5.2 753B TP=4 · **4 GPUs free** |
+| **8 × B200** (1.4 TB) | #8, #9 | GLM-5.2 TP=8 (modify config) |
+
+## Install to System
 
 ```bash
-ENGINE=vision-tq-mtp ./5090-ai.sh up
+./local-ai.sh  →  choose [a] Install local-ai to system
+# Then use from anywhere:
+local-ai up
 ```
 
-| Mode | Model | KV Cache | Context | Genesis | Notes |
-|---|---|---|---|---|---|
-| `text-mtp` | AEON-XS Text | fp8_e4m3 | 228K | — | Text-only, fastest prefill |
-| `vision-mtp` | AEON-XS Vision | fp8_e4m3 | 208K | — | Baseline vision MTP |
-| `vision-tq-mtp` | AEON-XS Vision | turboquant | 324K | P5B, P67, PN34, PREALLOC_V2 | Max context |
-| `huihui-vision-mtp` | Huihui Vision | fp8_e4m3 | 208K | — | [deprecated] |
-| `huihui-vision-tq-mtp` | Huihui Vision | turboquant | 312K | all 10 | [deprecated] |
+## Manual CLI
 
-**Beellama** (separate engine, separate compose files):
+| Command | Description |
+|---------|-------------|
+| `./local-ai.sh` | Interactive TUI menu |
+| `./local-ai.sh up` | Start server |
+| `./local-ai.sh down` | Stop server |
+| `./local-ai.sh status` | Show server status |
+| `./local-ai.sh logs` | Tail server logs |
+| `./local-ai.sh bench` | Run benchmark |
+| `./local-ai.sh config` | Edit `.env` |
+| `./local-ai.sh model` | Show/set weights path |
 
-| Mode | Engine | Draft | Context | Vision |
-|---|---|---|---|---|
-| `dflash-vision` | beellama.cpp | DFlash IQ4_XS | 262K | yes |
-| `qwopus-mtp-vision` | beellama.cpp | MTP draft=2 | 262K | yes |
+Select engine inline:
+```bash
+ENGINE=vision-tq-mtp ./local-ai.sh up
+ENGINE=glm-5.2-vllm ./local-ai.sh up
+```
 
-## Models
-
-| Mode | HF Repo | Format |
-|---|---|---|
-| AEON-XS Text | [AEON-7/Qwen3.6-27B-AEON-Ultimate-Uncensored-Text-NVFP4-MTP-XS](https://huggingface.co/AEON-7/Qwen3.6-27B-AEON-Ultimate-Uncensored-Text-NVFP4-MTP-XS) | modelopt NVFP4 |
-| AEON-XS Vision | [AEON-7/Qwen3.6-27B-AEON-Ultimate-Uncensored-Multimodal-NVFP4-MTP-XS](https://huggingface.co/AEON-7/Qwen3.6-27B-AEON-Ultimate-Uncensored-Multimodal-NVFP4-MTP-XS) | modelopt NVFP4 |
-| Huihui Vision | [sakamakismile/Huihui-Qwen3.6-27B-abliterated-NVFP4-MTP](https://huggingface.co/sakamakismile/Huihui-Qwen3.6-27B-abliterated-NVFP4-MTP) | modelopt NVFP4 |
-
-## Genesis Patches
-
-Custom vLLM patches under `genesis/vllm/_genesis/` for TurboQuant, GDN OOM fixes, and long-context tuning. Applied conditionally based on env vars — only active for `*-tq-mtp` modes.
-
-Key patches:
-
-| Patch | Function | Used by |
-|---|---|---|
-| P5B | Pad smaller-to-max batch | vision-tq-mtp, huihui-tq |
-| P67 | TurboQuant multi-query kernel | vision-tq-mtp, huihui-tq |
-| PN34 | Workspace lock relax (TQ memory growth) | vision-tq-mtp, huihui-tq |
-| PN59 | Streaming GDN orchestrator | huihui-tq |
-| PN54 | GDN contiguous dedup | huihui-tq |
-| PN32 | GDN chunked prefill v2 | huihui-tq |
-| PN8 | MTP draft online quant | huihui-tq |
-| P82 / P98 | Misc TQ fixes | huihui-tq |
-| PREALLOC_V2 | Prealloc manifest recorder | vision-tq-mtp, huihui-tq |
-
-## Structure
+## Project Layout
 
 ```
-5090-ai/
-├── 5090-ai.sh                  # Main TUI + config center
+local-ai/
+├── local-ai.sh                  # Main TUI + config center
 ├── compose/
-│   ├── vllm.yml                # Unified vLLM compose (env-var-driven)
-│   ├── _archive/               # Legacy per-mode compose files
-│   └── beellama/               # beellama.cpp compose files
-├── chat-templates/             # Qwen3 chat template jinja files
-│   ├── aeon-text/
+│   ├── vllm.yml                 # Unified vLLM compose (AEON/Huihui)
+│   ├── glm-vllm.yml             # GLM-5.2 vLLM compose (TP=4)
+│   ├── glm-sglang.yml           # GLM-5.2 SGLang compose (TP=4)
+│   ├── beellama/
+│   │   ├── dflash-vision.yml
+│   │   └── qwopus-mtp-vision.yml
+│   └── _archive/                # Legacy configs
+├── chat-templates/
 │   ├── aeon-vision/
+│   ├── aeon-text/
 │   ├── huihui/
-│   ├── froggeric/
-│   └── qwopus/
-├── genesis/
-│   └── vllm/_genesis/          # Custom vLLM patches
-│       ├── kernels/            # GDN scratch pool, streaming driver
-│       ├── patches/            # apply_all + config
-│       ├── prealloc_v2.py      # Prealloc manifest recorder
-│       └── tests/              # Test files
-├── scripts/
-│   ├── bench.sh                # Sequential benchmark
-│   ├── bench-ctx-levels.sh     # Context scaling benchmark
-│   └── bench-scheduling.sh     # Scheduling latency benchmark
-├── bench/                      # Benchmark result reports
-├── cache/                      # vLLM/Triton/FlashInfer caches (gitignored)
-├── models/                     # Model weights (gitignored)
-├── .env.example
-├── compose/.env                # Auto-generated by export_vllm_vars (gitignored)
-└── README.md
+│   └── glm-5.2/
+├── genesis/vllm/                # Genesis performance patches
+├── cache/                       # Persistent torch/flashinfer/triton caches
+├── models/                      # Weight files (symlink or download)
+└── scripts/
+    ├── bench.sh
+    └── bench-scheduling.sh
 ```
 
-## First Run
+## Adding a New Model
 
-1. Select **[1] Start server**
-2. If weights not found, guided setup:
-   - Download from HuggingFace (~20 GB)
-   - Specify existing weights directory
-   - Symlink from another location
-3. Progress bar with live logs during startup
+1. Add a `case` in `local-ai.sh:export_vllm_vars()`
+2. Create compose file if using a different runtime
+3. Add menu entry in `do_select_config()`
+4. Add helpers in `config_label()`, `get_weights_subdir()`, `get_hf_repo()`
 
-## Features
+## Overview
 
-- **Arrow key navigation** — ↑↓ + Enter
-- **Number shortcuts** — 1-9, a, b, c for direct access
-- **Live progress** — Progress bar with % and log streaming
-- **Crash detection** — Auto-detects container restart loops
-- **GPU monitoring** — nvidia-smi integration (temp, power, VRAM)
-- **Auto-install** — Install to system as `5090-ai` command
+- **Auto-install** — Install to system as `local-ai` command
+- **Auto-config** — Prompts for first-time weight download/link
+- **Benchmarks** — Built-in throughput & latency benchmarking
+- **Multi-arch** — AEON, Huihui, GLM-5.2, Beellama
+- **Dual runtime** — vLLM & SGLang support for GLM-5.2
 
-## Requirements
+---
 
-- Linux (Fedora/Ubuntu tested)
-- NVIDIA RTX 5090 (32GB, sm_120 Blackwell)
-- Docker + Docker Compose
-- NVIDIA Container Toolkit
-
-## Credits
-
-- **vLLM** — https://github.com/vllm-project/vllm
-- **Hermes Agent** — https://hermes-agent.nousresearch.com
-- **Multica** — https://github.com/multica-ai/multica
-- **Weights** — https://huggingface.co/AEON-7
+<p align="center"><sub>Built for RTX 5090 · B200 · Blackwell</sub></p>

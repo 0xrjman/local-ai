@@ -1,9 +1,9 @@
 # ──────────────────────────────────────────────────────────────────────────────
 # GLM-5.2 NVFP4 — SGLang v0.5.14 (env-var-driven)
 #
-# Usage (via 5090-ai.sh menu):
-#   ./5090-ai.sh config  →  select "glm-5.2-sglang"
-#   ./5090-ai.sh up
+# Usage (via local-ai.sh menu):
+#   ./local-ai.sh config  →  select "glm-5.2-sglang"
+#   ./local-ai.sh up
 #
 # Env var reference:
 #   CONTAINER_NAME     container name                   (default: sglang-glm-5.2)

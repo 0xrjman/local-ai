@@ -4,8 +4,8 @@
 # Single compose file covering all AEON/Huihui text/vision + fp8/turboquant
 # combinations. Switch models/modes via env vars — no need for multiple files.
 #
-# Usage (via 5090-ai.sh menu):
-#   ./5090-ai.sh up
+# Usage (via local-ai.sh menu):
+#   ./local-ai.sh up
 #
 # Or manually:
 #   export CONTAINER_NAME=vllm-vision-mtp

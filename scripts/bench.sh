@@ -61,7 +61,7 @@ TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 # ── Preflight ───────────────────────────────────────────────────────────────
 if ! curl -sf "${URL}/v1/models" >/dev/null; then
   echo "ERROR: service not reachable at ${URL}/v1/models" >&2
-  echo "  Start with: bash 5090-ai.sh" >&2
+  echo "  Start with: bash local-ai.sh" >&2
   exit 1
 fi
 
