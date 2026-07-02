@@ -16,8 +16,8 @@
 #   GPU_MEMORY_UTIL    VRAM fraction                    (default: 0.94)
 #   MAX_NUM_SEQS       max concurrent                   (default: 8)
 #   MAX_NUM_BATCHED    max batched tokens               (default: 4096)
-#   PORT               host port                        (default: 8030)
-#   GPU_DEVICE         GPU indices for TP=4             (default: 0,1,2,3)
+#   PORT               host port                        (default: 8020)
+#   GPU_DEVICE         GPU indices for TP=8             (default: 0,1,2,3,4,5,6,7)
 #   CHAT_TEMPLATE_PATH path to chat template jinja
 #   VLLM_IMAGE         Docker image                     (default: vllm/vllm-openai:v0.24.0)
 # ──────────────────────────────────────────────────────────────────────────────
@@ -28,7 +28,7 @@ services:
     container_name: "${CONTAINER_NAME:-vllm-glm-5.2}"
     restart: unless-stopped
     ports:
-      - "${PORT:-8030}:8000"
+      - "${PORT:-8020}:8000"
     volumes:
       - ${MODEL_DIR:-../models}:/root/.cache/huggingface
       - ../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
@@ -36,7 +36,7 @@ services:
       - ../cache/flashinfer:/root/.cache/flashinfer
       - ${CHAT_TEMPLATE_PATH:-../chat-templates/glm-5.2/chat_template.jinja}:/etc/glm-chat-template.jinja:ro
     environment:
-      - NVIDIA_VISIBLE_DEVICES=${GPU_DEVICE:-0,1,2,3}
+      - NVIDIA_VISIBLE_DEVICES=${GPU_DEVICE:-0,1,2,3,4,5,6,7}
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
       - VLLM_WORKER_MULTIPROC_METHOD=spawn
       - VLLM_NO_USAGE_STATS=1
@@ -55,7 +55,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ["${GPU_DEVICE:-0,1,2,3}"]
+              device_ids: ["${GPU_DEVICE:-0,1,2,3,4,5,6,7}"]
               capabilities: [gpu]
     entrypoint: ["/bin/bash", "-c"]
     command:
@@ -72,10 +72,8 @@ services:
       - ${MODEL_ALIAS:-local}
       - --quantization
       - ${QUANT_MODE:-modelopt}
-      - --dtype
-      - float16
       - --tensor-parallel-size
-      - "${TENSOR_PARALLEL_SIZE:-4}"
+      - "${TENSOR_PARALLEL_SIZE:-8}"
       - --max-model-len
       - "${MAX_MODEL_LEN:-1048576}"
       - --gpu-memory-utilization
@@ -91,3 +89,9 @@ services:
       - /etc/glm-chat-template.jinja
       - --enable-prefix-caching
       - --enable-chunked-prefill
+      - --enable-expert-parallel
+      - --reasoning-parser
+      - glm45
+      - --tool-call-parser
+      - glm47
+      - --enable-auto-tool-choice

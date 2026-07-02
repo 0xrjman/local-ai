@@ -1,5 +1,9 @@
 # ──────────────────────────────────────────────────────────────────────────────
-# GLM-5.2 NVFP4 — SGLang v0.5.14 (env-var-driven)
+# [WIP] GLM-5.2 NVFP4 — SGLang (dev-glm52-nvfp4, env-var-driven)
+#
+# Known bug: cuBLAS bf16 GEMM crash on B200 during flashinfer autotune /
+# CUDA graph capture. May require --disable-flashinfer-autotune
+# and --cuda-graph-backend-prefill=disabled as workaround.
 #
 # Usage (via local-ai.sh menu):
 #   ./local-ai.sh config  →  select "glm-5.2-sglang"
@@ -13,26 +17,26 @@
 #   QUANT_MODE         quantization backend             (default: modelopt)
 #   KV_CACHE_DTYPE     kv-cache-dtype                   (default: fp8_e4m3)
 #   MAX_MODEL_LEN      context length                   (default: 1048576)
-#   GPU_MEMORY_UTIL    VRAM fraction                    (default: 0.94)
+#   MEM_FRACTION_STATIC  SGLang mem-fraction-static     (default: 0.80)
 #   MAX_NUM_SEQS       max concurrent                   (default: 8)
-#   PORT               host port                        (default: 8031)
-#   GPU_DEVICE         GPU indices for TP=4             (default: 0,1,2,3)
-#   SGLANG_IMAGE       Docker image                     (default: lmsysorg/sglang:v0.5.14)
+#   PORT               host port                        (default: 8020)
+#   GPU_DEVICE         GPU indices for TP=8             (default: 0,1,2,3,4,5,6,7)
+#   SGLANG_IMAGE       Docker image                     (default: lmsysorg/sglang:dev-glm52-nvfp4)
 # ──────────────────────────────────────────────────────────────────────────────
 
 services:
   sglang:
-    image: ${SGLANG_IMAGE:-lmsysorg/sglang:v0.5.14}
+    image: ${SGLANG_IMAGE:-lmsysorg/sglang:dev-glm52-nvfp4}
     container_name: "${CONTAINER_NAME:-sglang-glm-5.2}"
     restart: unless-stopped
     ports:
-      - "${PORT:-8031}:8000"
+      - "${PORT:-8020}:8000"
     volumes:
       - ${MODEL_DIR:-../models}:/root/.cache/huggingface
       - ../cache/triton:/root/.triton/cache
       - ../cache/flashinfer:/root/.cache/flashinfer
     environment:
-      - NVIDIA_VISIBLE_DEVICES=${GPU_DEVICE:-0,1,2,3}
+      - NVIDIA_VISIBLE_DEVICES=${GPU_DEVICE:-0,1,2,3,4,5,6,7}
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
       - OMP_NUM_THREADS=1
       - PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True,max_split_size_mb:512}
@@ -44,7 +48,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ["${GPU_DEVICE:-0,1,2,3}"]
+              device_ids: ["${GPU_DEVICE:-0,1,2,3,4,5,6,7}"]
               capabilities: [gpu]
     entrypoint: ["python3", "-m", "sglang.launch_server"]
     command:
@@ -55,17 +59,23 @@ services:
       - "--port"
       - "8000"
       - "--tensor-parallel-size"
-      - "${TENSOR_PARALLEL_SIZE:-4}"
+      - "${TENSOR_PARALLEL_SIZE:-8}"
       - "--quantization"
-      - "${QUANT_MODE:-modelopt}"
+      - "${QUANT_MODE:-modelopt_fp4}"
       - "--kv-cache-dtype"
       - "${KV_CACHE_DTYPE:-fp8_e4m3}"
       - "--context-length"
       - "${MAX_MODEL_LEN:-1048576}"
       - "--mem-fraction-static"
-      - "${GPU_MEMORY_UTIL:-0.94}"
+      - "${MEM_FRACTION_STATIC:-0.80}"
       - "--max-running-requests"
       - "${MAX_NUM_SEQS:-8}"
+      - "--served-model-name"
+      - "${MODEL_ALIAS:-local}"
       - "--trust-remote-code"
-      - "--enable-prefix-caching"
-      - "--enable-chunked-prefill"
+      - "--chunked-prefill-size"
+      - "16384"
+      - "--tool-call-parser"
+      - "glm47"
+      - "--reasoning-parser"
+      - "glm45"
