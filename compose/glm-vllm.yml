@@ -10,15 +10,11 @@
 #   MODEL_DIR          weights root                     (default: ../models)
 #   MODEL_SUBDIR       model subdirectory               (required)
 #   MODEL_ALIAS        served model name                (default: local)
-#   QUANT_MODE         quantization backend             (default: modelopt)
 #   KV_CACHE_DTYPE     kv-cache-dtype                   (default: fp8_e4m3)
-#   MAX_MODEL_LEN      context length                   (default: 1048576)
 #   GPU_MEMORY_UTIL    VRAM fraction                    (default: 0.94)
-#   MAX_NUM_SEQS       max concurrent                   (default: 8)
-#   MAX_NUM_BATCHED    max batched tokens               (default: 4096)
 #   PORT               host port                        (default: 8020)
 #   GPU_DEVICE         GPU indices for TP=8             (default: 0,1,2,3,4,5,6,7)
-#   CHAT_TEMPLATE_PATH path to chat template jinja
+#   CHAT_TEMPLATE_PATH path to chat template jinja       (volume-mounted, not passed as CLI arg)
 #   VLLM_IMAGE         Docker image                     (default: vllm/vllm-openai:v0.24.0)
 # ──────────────────────────────────────────────────────────────────────────────
 

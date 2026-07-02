@@ -16,11 +16,11 @@ git clone https://github.com/0xrjman/local-ai && cd local-ai
 └────────────────────────────────────────────────────────┘
 
   Config:    AEON-XS MTP (Vision) (vision-mtp)
-  Compose:   /home/yubo/ryan/local-ai/compose/vllm.yml
+  Compose:   ~/yubo/yubo/llm/compose/vllm.yml
   Container: vllm-vision-mtp
   Status:    o stopped
   GPU:     0, NVIDIA B200, 0 MiB, 183359 MiB
-  Models:  /home/yubo/ryan/local-ai/models
+  Models:  ~/yubo/yubo/llm/models
 
   ▸ [1] >  Start server
     [2] x  Stop server
@@ -42,8 +42,8 @@ Access via `./local-ai.sh config` or set `ENGINE=... ./local-ai.sh up`.
 | 5 | **Huihui NVFP4+MTP+TQ (Vision)** | 1 × B200 | ~170 GB | 312K | Full Genesis [deprecated] |
 | 6 | **Beellama DFlash Vision** | 1 × 5090/B200 | ~24 GB | 262K | GGUF · iMatrix |
 | 7 | **Beellama Qwopus MTP Vision** | 1 × 5090/B200 | ~24 GB | 262K | GGUF · MTP · Coder |
-| 8 | **GLM-5.2 NVFP4 · vLLM** 🆕 | **4 × B200** | ~94 GB | **1M** | 753B MoE · 256 experts · TP=4 |
-| 9 | **GLM-5.2 NVFP4 · SGLang** 🆕 | **4 × B200** | ~94 GB | **1M** | SGLang v0.5.14 · TP=4 |
+| 8 | **GLM-5.2 NVFP4 · vLLM** 🆕 | **8 × B200** | ~116 GB | **1M** | 753B MoE · 256 experts · TP=8 |
+| 9 | **GLM-5.2 NVFP4 · SGLang** 🆕 | **8 × B200** | ~116 GB | **1M** | SGLang dev · TP=8 [WIP] |
 
 > 🟢 = production-ready  ·  🆕 = newly added
 
@@ -53,8 +53,7 @@ Access via `./local-ai.sh config` or set `ENGINE=... ./local-ai.sh up`.
 |----------|---------|-------|
 | **RTX 5090** (32 GB) | #6, #7 | GGUF quantized models only |
 | **1 × B200** (179 GB) | #1–#5 | Full NVFP4 + MTP |
-| **4 × B200** (716 GB) | #8, #9 | GLM-5.2 753B TP=4 · **4 GPUs free** |
-| **8 × B200** (1.4 TB) | #8, #9 | GLM-5.2 TP=8 (modify config) |
+| **8 × B200** (1.4 TB) | #8, #9 | GLM-5.2 753B · TP=8 |
 
 ## Install to System
 
@@ -90,8 +89,8 @@ local-ai/
 ├── local-ai.sh                  # Main TUI + config center
 ├── compose/
 │   ├── vllm.yml                 # Unified vLLM compose (AEON/Huihui)
-│   ├── glm-vllm.yml             # GLM-5.2 vLLM compose (TP=4)
-│   ├── glm-sglang.yml           # GLM-5.2 SGLang compose (TP=4)
+│   ├── glm-vllm.yml             # GLM-5.2 vLLM compose (TP=8)
+│   ├── glm-sglang.yml           # GLM-5.2 SGLang compose (TP=8) [WIP]
 │   ├── beellama/
 │   │   ├── dflash-vision.yml
 │   │   └── qwopus-mtp-vision.yml
