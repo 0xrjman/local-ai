@@ -297,15 +297,17 @@ get_model_name() {
 }
 
 # ── Quick test cache (1-token inference for TUI health panel) ────────────────
-QUICK_TEST_CACHED=""
+QUICK_TEST_RESULT=""
+QUICK_TEST_MS=""
 QUICK_TEST_CACHED_AT=0
 QUICK_TEST_READY=false  # whether last run was when server was ready
 
-# Re-run quick test every 15s; returns cached result into QUICK_TEST_CACHED.
+# Re-run quick test every 15s; stores result + latency in QUICK_TEST_*.
 # Uses max_tokens=1 for the fastest possible inference round.
 quick_test_cached() {
   if ! is_ready; then
-    QUICK_TEST_CACHED=""
+    QUICK_TEST_RESULT=""
+    QUICK_TEST_MS=""
     QUICK_TEST_READY=false
     return
   fi
@@ -316,11 +318,27 @@ quick_test_cached() {
     return  # fresh enough
   fi
 
-  QUICK_TEST_CACHED=$(curl -sf --max-time 10 \
+  local model body resp ms
+  model=$(get_model_name)
+  body="{\"model\":\"${model}\",\"messages\":[{\"role\":\"user\",\"content\":\"Say: OK\"}],\"max_tokens\":1}"
+
+  # -w writes time_total (seconds) to stdout after the body
+  resp=$(curl -sf --max-time 10 \
     "http://localhost:${PORT}/v1/chat/completions" \
     -H "Content-Type: application/json" \
-    -d '{"model":"local","messages":[{"role":"user","content":"Hi"}],"max_tokens":1}' \
-    2>/dev/null)
+    -d "$body" \
+    -w '\n%{time_total}' 2>/dev/null) || true
+
+  if [[ -n "$resp" ]]; then
+    local json_body latency_str
+    latency_str=$(echo "$resp" | tail -1)
+    json_body=$(echo "$resp" | sed '$d')
+    QUICK_TEST_RESULT=$json_body
+    QUICK_TEST_MS=$(echo "$latency_str" | awk '{printf "%.0f", $1 * 1000}')
+  else
+    QUICK_TEST_RESULT=""
+    QUICK_TEST_MS=""
+  fi
 
   QUICK_TEST_CACHED_AT=$now
   QUICK_TEST_READY=true
@@ -331,18 +349,8 @@ quick_test_cached() {
 test_panel() {
   if is_ready; then
     quick_test_cached
-    if [[ -n "$QUICK_TEST_CACHED" ]]; then
-      local preview
-      preview=$(echo "$QUICK_TEST_CACHED" | python3 -c '
-import json, sys
-try:
-    d = json.load(sys.stdin)
-    c = d.get("choices", [{}])[0].get("message", {}).get("content", "")
-    print(c.strip()[:60] if c else "(empty)")
-except:
-    print("(parse error)")
-' 2>/dev/null)
-      echo -e "  ${GREEN}▶ Live test:${NC} ${BOLD}${preview}${NC}"
+    if [[ -n "$QUICK_TEST_RESULT" ]]; then
+      echo -e "  ${GREEN}▶ Live test:${NC} ${GREEN}✓${NC}  ${DIM}${QUICK_TEST_MS}ms${NC}"
     else
       echo -e "  ${YELLOW}▶ Live test:${NC} ${DIM}(no response — model may still be loading)${NC}"
     fi
@@ -353,7 +361,36 @@ except:
 }
 
 gpu_info() {
-  nvidia-smi --query-gpu=index,name,memory.used,memory.total --format=csv,noheader 2>/dev/null || echo "n/a"
+  local lines count unique name used total
+  lines=$(nvidia-smi --query-gpu=index,name,memory.used,memory.total --format=csv,noheader 2>/dev/null)
+  [[ -z "$lines" ]] && { echo "n/a"; return; }
+  count=$(echo "$lines" | wc -l)
+  unique=$(echo "$lines" | cut -d',' -f2- | sort -u | wc -l)
+  if [[ $unique -eq 1 ]]; then
+    name=$(echo "$lines"  | head -1 | cut -d',' -f2 | sed 's/^ //')
+    used=$(echo "$lines"  | head -1 | cut -d',' -f3 | sed 's/^ //')
+    total=$(echo "$lines" | head -1 | cut -d',' -f4 | sed 's/^ //')
+    if [[ $count -gt 1 ]]; then
+      echo "${count}× ${name}, ${used}/${total}"
+    else
+      echo "${name}, ${used}/${total}"
+    fi
+  else
+    echo "$lines"
+  fi
+}
+
+gpu_label() {
+  local name count
+  name=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)
+  count=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | wc -l)
+  if [[ -z "$name" ]]; then
+    echo "n/a"
+  elif [[ $count -gt 1 ]]; then
+    echo "${count}× ${name}"
+  else
+    echo "$name"
+  fi
 }
 
 config_label() {
@@ -375,7 +412,7 @@ header() {
   local label=$(config_label)
   echo -e "  ${CYAN}${BOLD}┌────────────────────────────────────────────────────────┐${NC}"
   echo -e "  ${CYAN}${BOLD}│${NC}  ${BOLD}local-ai${NC}  ${CYAN}·${NC} ${BOLD}${label}${NC}"
-  echo -e "  ${CYAN}${BOLD}│${NC}  ${CYAN}RTX 5090${NC}"
+  echo -e "  ${CYAN}${BOLD}│${NC}  ${CYAN}$(gpu_label)${NC}"
   echo -e "  ${CYAN}${BOLD}└────────────────────────────────────────────────────────┘${NC}"
   echo ""
 }

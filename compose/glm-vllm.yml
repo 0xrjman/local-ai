@@ -12,6 +12,8 @@
 #   MODEL_ALIAS        served model name                (default: local)
 #   KV_CACHE_DTYPE     kv-cache-dtype                   (default: fp8_e4m3)
 #   GPU_MEMORY_UTIL    VRAM fraction                    (default: 0.94)
+#   MAX_MODEL_LEN      max context length               (default: 1048576, 1M)
+#   MAX_NUM_SEQS       max concurrent sequences         (default: 8)
 #   PORT               host port                        (default: 8020)
 #   GPU_DEVICE         GPU indices for TP=8             (default: 0,1,2,3,4,5,6,7)
 #   CHAT_TEMPLATE_PATH path to chat template jinja       (volume-mounted, not passed as CLI arg)
@@ -70,10 +72,18 @@ services:
       - "${TENSOR_PARALLEL_SIZE:-8}"
       - --gpu-memory-utilization
       - "${GPU_MEMORY_UTIL:-0.94}"
+      - --max-model-len
+      - "${MAX_MODEL_LEN:-1048576}"
+      - --max-num-seqs
+      - "${MAX_NUM_SEQS:-8}"
       - --kv-cache-dtype
       - ${KV_CACHE_DTYPE:-fp8_e4m3}
       - --trust-remote-code
       - --enable-expert-parallel
+      - --speculative-config.method
+      - mtp
+      - --speculative-config.num_speculative_tokens
+      - "5"
       - --reasoning-parser
       - glm45
       - --tool-call-parser
