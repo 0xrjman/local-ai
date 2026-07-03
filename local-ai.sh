@@ -189,7 +189,7 @@ EOF
 }
 
 # Engine selection (ENGINE may come from .env)
-ENGINE="${ENGINE:-text-mtp}"
+ENGINE="${ENGINE:-glm-5.2-vllm}"
 MODEL_DIR="${MODEL_DIR:-${ROOT_DIR}/models}"
 # Map ENGINE → COMPOSE_FILE + default CONTAINER name.
 # NOTE: CONTAINER may later be overridden by .env; the compose file's
@@ -294,6 +294,62 @@ resolve_container() {
 get_model_name() {
   curl -sf "http://localhost:${PORT}/v1/models" 2>/dev/null | \
     python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["data"][0]["id"])' 2>/dev/null || echo "?"
+}
+
+# ── Quick test cache (1-token inference for TUI health panel) ────────────────
+QUICK_TEST_CACHED=""
+QUICK_TEST_CACHED_AT=0
+QUICK_TEST_READY=false  # whether last run was when server was ready
+
+# Re-run quick test every 15s; returns cached result into QUICK_TEST_CACHED.
+# Uses max_tokens=1 for the fastest possible inference round.
+quick_test_cached() {
+  if ! is_ready; then
+    QUICK_TEST_CACHED=""
+    QUICK_TEST_READY=false
+    return
+  fi
+
+  local now
+  now=$(date +%s)
+  if $QUICK_TEST_READY && (( now - QUICK_TEST_CACHED_AT < 15 )); then
+    return  # fresh enough
+  fi
+
+  QUICK_TEST_CACHED=$(curl -sf --max-time 10 \
+    "http://localhost:${PORT}/v1/chat/completions" \
+    -H "Content-Type: application/json" \
+    -d '{"model":"local","messages":[{"role":"user","content":"Hi"}],"max_tokens":1}' \
+    2>/dev/null)
+
+  QUICK_TEST_CACHED_AT=$now
+  QUICK_TEST_READY=true
+}
+
+# One-line health panel shown in the TUI after status_line.
+# Always visible when a container is running, so you know the panel exists.
+test_panel() {
+  if is_ready; then
+    quick_test_cached
+    if [[ -n "$QUICK_TEST_CACHED" ]]; then
+      local preview
+      preview=$(echo "$QUICK_TEST_CACHED" | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    c = d.get("choices", [{}])[0].get("message", {}).get("content", "")
+    print(c.strip()[:60] if c else "(empty)")
+except:
+    print("(parse error)")
+' 2>/dev/null)
+      echo -e "  ${GREEN}▶ Live test:${NC} ${BOLD}${preview}${NC}"
+    else
+      echo -e "  ${YELLOW}▶ Live test:${NC} ${DIM}(no response — model may still be loading)${NC}"
+    fi
+  elif is_running; then
+    echo -e "  ${YELLOW}▶ Live test:${NC} ${DIM}(waiting for model to load...)${NC}"
+  fi
+  echo ""
 }
 
 gpu_info() {
@@ -1871,6 +1927,7 @@ while true; do
   fi
   header
   status_line
+  test_panel
   draw_menu "$selected"
   # Clear from cursor to end of screen (remove stale lines)
   printf '\033[J'
