@@ -344,15 +344,45 @@ quick_test_cached() {
   QUICK_TEST_READY=true
 }
 
+# ── Async live test for non-blocking TUI ─────────────────────────────────────
+# temp file path for background test results
+QUICK_TEST_ASYNC_FILE=""
+QUICK_TEST_ASYNC_PID=""
+
+quick_test_async() {
+  local outfile="$1"
+  (
+    local model body resp
+    model=$(get_model_name)
+    body="{\"model\":\"${model}\",\"messages\":[{\"role\":\"user\",\"content\":\"Say: OK\"}],\"max_tokens\":1}"
+    resp=$(curl -sf --max-time 8 \
+      "http://localhost:${PORT}/v1/chat/completions" \
+      -H "Content-Type: application/json" \
+      -d "$body" \
+      -w '\n%{time_total}' 2>/dev/null) || true
+
+    if [[ -n "$resp" ]]; then
+      local json_body latency_str ms now
+      latency_str=$(echo "$resp" | tail -1)
+      json_body=$(echo "$resp" | sed '$d')
+      ms=$(echo "$latency_str" | awk '{printf "%.0f", $1 * 1000}')
+      now=$(date +%s)
+      printf 'QUICK_TEST_RESULT=%s\nQUICK_TEST_MS=%d\nQUICK_TEST_READY=true\nQUICK_TEST_CACHED_AT=%d\n' \
+        "$(printf '%s' "$json_body" | sed "s/'/'\\\\''/g; s/^/'/; s/$/'/")" \
+        "$ms" "$now" > "$outfile"
+    fi
+  ) &>/dev/null &
+}
+
 # One-line health panel shown in the TUI after status_line.
 # Always visible when a container is running, so you know the panel exists.
+# NON-BLOCKING: shows cached result or a placeholder — never waits on I/O.
 test_panel() {
   if is_ready; then
-    quick_test_cached
     if [[ -n "$QUICK_TEST_RESULT" ]]; then
       echo -e "  ${GREEN}▶ Live test:${NC} ${GREEN}✓${NC}  ${DIM}${QUICK_TEST_MS}ms${NC}"
     else
-      echo -e "  ${YELLOW}▶ Live test:${NC} ${DIM}(no response — model may still be loading)${NC}"
+      echo -e "  ${YELLOW}▶ Live test:${NC} ${DIM}(checking...)${NC}"
     fi
   elif is_running; then
     echo -e "  ${YELLOW}▶ Live test:${NC} ${DIM}(waiting for model to load...)${NC}"
@@ -1948,26 +1978,25 @@ fi
 # Interactive TUI with arrow keys
 selected=0
 menu_count=${#MENU_ITEMS[@]}
-need_clear=1  # 1 = full clear needed, 0 = cursor-home sufficient
 
 # Hide cursor to reduce flicker
 tput civis 2>/dev/null || true
 trap 'tput cnorm 2>/dev/null' EXIT
 
 while true; do
-  if [[ $need_clear -eq 1 ]]; then
-    clear
-    need_clear=0
-  else
-    # Move cursor to top-left without clearing — no flicker
-    printf '\033[H'
+  # Clear + redraw in a single write to avoid both flash (from `clear` gap)
+  # and ghosting (from \033[H alone when the terminal has scrolled).
+  frame_buf=$(header; status_line; test_panel; draw_menu "$selected")
+  printf '\033[H\033[2J%s' "$frame_buf"
+
+  # Non-blocking async quick test: launch if cache is stale
+  now_ts=$(date +%s)
+  if is_ready && ! ($QUICK_TEST_READY && (( now_ts - QUICK_TEST_CACHED_AT < 15 ))) \
+               && [[ -z "$QUICK_TEST_ASYNC_PID" || ! -d /proc/$QUICK_TEST_ASYNC_PID ]]; then
+    QUICK_TEST_ASYNC_FILE=$(mktemp "${TMPDIR:-/tmp}/local-ai-live-XXXXXX")
+    quick_test_async "$QUICK_TEST_ASYNC_FILE"
+    QUICK_TEST_ASYNC_PID=$!
   fi
-  header
-  status_line
-  test_panel
-  draw_menu "$selected"
-  # Clear from cursor to end of screen (remove stale lines)
-  printf '\033[J'
 
   # Read single keypress (arrow keys are 3 bytes: ESC [ A/B)
   IFS= read -rsn1 key
@@ -1992,53 +2021,59 @@ while true; do
     '') # Enter - execute selected action
       ${MENU_ACTIONS[$selected]}
       read -rp "  Press Enter to continue..."
-      need_clear=1
       ;;
     [1-9]) # Number keys 1-9
       selected=$((key - 1))
       ${MENU_ACTIONS[$selected]}
       read -rp "  Press Enter to continue..."
-      need_clear=1
       ;;
     a|A) # Key 'a' for 10th item (Select Config)
       selected=9
       ${MENU_ACTIONS[$selected]}
       read -rp "  Press Enter to continue..."
-      need_clear=1
       ;;
     b|B) # Key 'b' for 11th item (Config .env)
       selected=10
       ${MENU_ACTIONS[$selected]}
       read -rp "  Press Enter to continue..."
-      need_clear=1
       ;;
     c|C) # Key 'c' for 12th item (Install local-ai)
       selected=11
       ${MENU_ACTIONS[$selected]}
       read -rp "  Press Enter to continue..."
-      need_clear=1
       ;;
     d|D) # Key 'd' for 13th item (Install Hermes)
       selected=12
       ${MENU_ACTIONS[$selected]}
       read -rp "  Press Enter to continue..."
-      need_clear=1
       ;;
     e|E) # Key 'e' for 14th item (Configure Hermes)
       selected=13
       ${MENU_ACTIONS[$selected]}
       read -rp "  Press Enter to continue..."
-      need_clear=1
       ;;
     f|F) # Key 'f' for 15th item (Configure SOUL.md)
       selected=14
       ${MENU_ACTIONS[$selected]}
       read -rp "  Press Enter to continue..."
-      need_clear=1
       ;;
     q|Q|0) # Quit
       echo -e "${DIM}Bye!${NC}"
       exit 0
       ;;
   esac
+
+  # Check if async test completed (after action handling, before next render)
+  if [[ -n "$QUICK_TEST_ASYNC_FILE" ]]; then
+    if [[ ! -d /proc/$QUICK_TEST_ASYNC_PID ]]; then
+      # Process finished — read result
+      if [[ -s "$QUICK_TEST_ASYNC_FILE" ]]; then
+        source "$QUICK_TEST_ASYNC_FILE" 2>/dev/null || true
+      fi
+      rm -f "$QUICK_TEST_ASYNC_FILE"
+      QUICK_TEST_ASYNC_FILE=""
+      QUICK_TEST_ASYNC_PID=""
+    fi
+    # Process still running — leave vars alone, try again next iteration
+  fi
 done
