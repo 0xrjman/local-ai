@@ -120,6 +120,19 @@ export_vllm_vars() {
       export GENESIS_PN34=1 GENESIS_P82=1 GENESIS_P98=1
       export GENESIS_PN59=1 GENESIS_PN54=1 GENESIS_PN32=1
       ;;
+    unsloth-vision-mtp)
+      export CONTAINER_NAME="vllm-unsloth-vision-mtp"
+      export MODEL_SUBDIR="qwen3.6-27b-nvfp4-unsloth"
+      export QUANT_MODE="modelopt"
+      export MODALITY="vision"
+      export SPEC_CONFIG='{"method":"qwen3_5_mtp","num_speculative_tokens":3}'
+      export CHAT_TEMPLATE_PATH="${ROOT_DIR}/chat-templates/aeon-vision/chat_template.jinja"
+      export MAX_MODEL_LEN="${MAX_MODEL_LEN:-212992}"
+      export GPU_MEMORY_UTIL="${GPU_MEMORY_UTIL:-0.94}"
+      export MAX_NUM_SEQS="${MAX_NUM_SEQS:-8}"
+      export MAX_NUM_BATCHED="${MAX_NUM_BATCHED:-4096}"
+      export KV_CACHE_DTYPE="${KV_CACHE_DTYPE:-fp8_e4m3}"
+      ;;
     glm-5.2-vllm)
       export CONTAINER_NAME="vllm-glm-5.2"
       export MODEL_SUBDIR="glm-5.2-nvfp4"
@@ -430,6 +443,7 @@ config_label() {
     text-mtp)  echo "AEON-XS MTP (Text)" ;;
     huihui-vision-mtp)  echo "Huihui NVFP4+MTP (Vision)" ;;
     huihui-vision-tq-mtp)  echo "Huihui NVFP4+MTP+TQ (Vision)" ;;
+    unsloth-vision-mtp)  echo "Unsloth NVFP4+MTP (Vision)" ;;
     beellama-dflash-vision)        echo "DFlash Vision" ;;
     beellama-qwopus-mtp)  echo "Qwopus MTP Vision" ;;
     glm-5.2-vllm)  echo "GLM-5.2 NVFP4 · vLLM" ;;
@@ -479,6 +493,7 @@ get_weights_subdir() {
     text-mtp) echo "aeon-qwen3.6-27b-ultimate-text-nvfp4-mtp-xs" ;;
     huihui-vision-mtp)  echo "huihui-qwen3.6-27b-abliterated-nvfp4-mtp" ;;
     huihui-vision-tq-mtp)  echo "huihui-qwen3.6-27b-abliterated-nvfp4-mtp" ;;
+    unsloth-vision-mtp)  echo "qwen3.6-27b-nvfp4-unsloth" ;;
     vision-mtp)  echo "aeon-qwen3.6-27b-ultimate-nvfp4-mtp-xs" ;;
     vision-tq-mtp)  echo "aeon-qwen3.6-27b-ultimate-nvfp4-mtp-xs" ;;
     beellama-qwopus-mtp)  echo "qwopus-3.6-27b-coder-mtp-gguf" ;;
@@ -495,6 +510,7 @@ get_hf_repo() {
     text-mtp) echo "AEON-7/Qwen3.6-27B-AEON-Ultimate-Uncensored-Text-NVFP4-MTP-XS" ;;
     huihui-vision-mtp) echo "sakamakismile/Huihui-Qwen3.6-27B-abliterated-NVFP4-MTP" ;;
     huihui-vision-tq-mtp) echo "sakamakismile/Huihui-Qwen3.6-27B-abliterated-NVFP4-MTP" ;;
+    unsloth-vision-mtp) echo "unsloth/Qwen3.6-27B-NVFP4" ;;
     beellama-qwopus-mtp) echo "Jackrong/Qwopus3.6-27B-Coder-MTP-GGUF" ;;
     beellama-dflash-vision)       echo "unsloth/Qwen3.6-27B-GGUF" ;;
     glm-5.2-vllm|glm-5.2-sglang)  echo "nvidia/GLM-5.2-NVFP4" ;;
@@ -517,6 +533,9 @@ prompt_weights() {
       ;;
     huihui-vision-mtp|huihui-vision-tq-mtp)
       echo -e "  Model: ${BOLD}Qwen3.6-27B NVFP4 (Huihui abliterated + MTP)${NC}"
+      ;;
+    unsloth-vision-mtp)
+      echo -e "  Model: ${BOLD}Qwen3.6-27B NVFP4 (Unsloth + MTP)${NC}"
       ;;
     glm-5.2-vllm|glm-5.2-sglang)
       echo -e "  Model: ${BOLD}NVIDIA GLM-5.2 NVFP4${NC}"
@@ -1507,6 +1526,7 @@ do_select_config() {
     "text-mtp"
     "huihui-vision-mtp"
     "huihui-vision-tq-mtp"
+    "unsloth-vision-mtp"
     "beellama-dflash-vision"
     "beellama-qwopus-mtp"
     "glm-5.2-vllm"
@@ -1518,6 +1538,7 @@ do_select_config() {
     "Engine: vLLM · KV: fp8_e4m3 · Ctx: 228K · MTP3 · Text · AEON-XS"
     "Engine: vLLM · KV: fp8_e4m3 · Ctx: 208K · MTP3 · Vision · Huihui [deprecated]"
     "Engine: vLLM · KV: turboquant · Ctx: 312K · MTP3 · Vision · P5b+P67+PN8+PN32+PN34+P54+P59+P82 · Huihui [deprecated]"
+    "Engine: vLLM · KV: fp8_e4m3 · Ctx: 208K · MTP3 · Vision · Unsloth"
     "Engine: beellama.cpp · KV: q5_0/q4_1 · Ctx: 262K · DFlash · Vision"
     "Engine: beellama.cpp · MTP · Ctx: 262K · Q4_K_M · Vision · Coder · no-thinking"
     "Engine: vLLM v0.24.0 · TP4 · 753B NVFP4 · 1M Ctx · GLM-5.2"
@@ -1584,7 +1605,7 @@ do_select_config() {
   local COMPOSE_FILE_OLD="$COMPOSE_FILE"
 
   case "$choice" in
-    text-mtp|vision-mtp|vision-tq-mtp|huihui-vision-mtp|huihui-vision-tq-mtp)
+    text-mtp|vision-mtp|vision-tq-mtp|huihui-vision-mtp|huihui-vision-tq-mtp|unsloth-vision-mtp)
       ENGINE="$choice"
       save_env "ENGINE" "$choice"
       export_vllm_vars "$choice"
