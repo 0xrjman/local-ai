@@ -544,15 +544,33 @@ prompt_weights() {
       echo -e "  Model: ${BOLD}Qwen3.6-27B-Text-NVFP4-MTP${NC}"
       ;;
   esac
-  echo -e "  Size:  ~377 GB (753B MoE · 256 experts · NVFP4, 47 shards)"
-  echo -e "  Link:  ${BLUE}${HF_URL}${NC}"
+  local _repo="$(get_hf_repo)"
+  local _url="https://huggingface.co/${_repo}"
+  case "$ENGINE" in
+    glm-5.2-vllm|glm-5.2-sglang)
+      echo -e "  Size:  ~377 GB (753B MoE · 256 experts · NVFP4, 47 shards)"
+      ;;
+    beellama-dflash-vision)
+      echo -e "  Size:  ~19 GB (GGUF, single file)"
+      ;;
+    beellama-qwopus-mtp)
+      echo -e "  Size:  ~20 GB (GGUF, single file)"
+      ;;
+    unsloth-vision-mtp)
+      echo -e "  Size:  ~22 GB (5 shards, NVFP4)"
+      ;;
+    *)
+      echo -e "  Size:  ~20 GB (NVFP4)"
+      ;;
+  esac
+  echo -e "  Link:  ${BLUE}${_url}${NC}"
   echo ""
   echo -e "${BOLD}How would you like to proceed?${NC}"
   echo ""
   if [[ "$ENGINE" == glm-5.2-vllm || "$ENGINE" == glm-5.2-sglang ]]; then
     echo -e "  ${BOLD}1)${NC} Download from HuggingFace (~377 GB, 47 shards, may take hours)"
   else
-    echo -e "  ${BOLD}1)${NC} Download from HuggingFace (~19 GB)"
+    echo -e "  ${BOLD}1)${NC} Download from HuggingFace (~22 GB)"
   fi
   echo -e "  ${BOLD}2)${NC} Specify existing weights directory"
   echo -e "  ${BOLD}3)${NC} Symlink from another location"
