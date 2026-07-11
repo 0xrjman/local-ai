@@ -125,7 +125,7 @@ export_vllm_vars() {
       export MODEL_SUBDIR="qwen3.6-27b-nvfp4-unsloth"
       export QUANT_MODE="modelopt"
       export MODALITY="vision"
-      export SPEC_CONFIG='{"method":"qwen3_5_mtp","num_speculative_tokens":3}'
+      export SPEC_CONFIG='{"method":"mtp","num_speculative_tokens":2}'
       export CHAT_TEMPLATE_PATH="${ROOT_DIR}/chat-templates/aeon-vision/chat_template.jinja"
       export MAX_MODEL_LEN="${MAX_MODEL_LEN:-212992}"
       export GPU_MEMORY_UTIL="${GPU_MEMORY_UTIL:-0.94}"
