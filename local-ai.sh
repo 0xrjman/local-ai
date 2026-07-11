@@ -208,7 +208,7 @@ MODEL_DIR="${MODEL_DIR:-${ROOT_DIR}/models}"
 # NOTE: CONTAINER may later be overridden by .env; the compose file's
 # container_name: directive is the source of truth at runtime.
 case "$ENGINE" in
-  text-mtp|vision-mtp|vision-tq-mtp|huihui-vision-mtp|huihui-vision-tq-mtp)
+  text-mtp|vision-mtp|vision-tq-mtp|huihui-vision-mtp|huihui-vision-tq-mtp|unsloth-vision-mtp)
     # Single unified compose — env vars drive the config
     export_vllm_vars "$ENGINE"
     COMPOSE_FILE="${ROOT_DIR}/compose/vllm.yml"
