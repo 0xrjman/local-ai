@@ -123,7 +123,7 @@ export_vllm_vars() {
     unsloth-vision-mtp)
       export CONTAINER_NAME="vllm-unsloth-vision-mtp"
       export MODEL_SUBDIR="qwen3.6-27b-nvfp4-unsloth"
-      export QUANT_MODE="modelopt"
+      export QUANT_MODE="compressed-tensors"
       export MODALITY="vision"
       export SPEC_CONFIG='{"method":"mtp","num_speculative_tokens":2}'
       export CHAT_TEMPLATE_PATH="${ROOT_DIR}/chat-templates/aeon-vision/chat_template.jinja"
