@@ -127,7 +127,7 @@ export_vllm_vars() {
       export MODALITY="vision"
       export SPEC_CONFIG='{"method":"mtp","num_speculative_tokens":2}'
       export CHAT_TEMPLATE_PATH="${ROOT_DIR}/chat-templates/aeon-vision/chat_template.jinja"
-      export MAX_MODEL_LEN="${MAX_MODEL_LEN:-212992}"
+      export MAX_MODEL_LEN="${MAX_MODEL_LEN:-137600}"
       export GPU_MEMORY_UTIL="${GPU_MEMORY_UTIL:-0.94}"
       export MAX_NUM_SEQS="${MAX_NUM_SEQS:-8}"
       export MAX_NUM_BATCHED="${MAX_NUM_BATCHED:-4096}"
