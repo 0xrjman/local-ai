@@ -203,7 +203,7 @@ def _ninfer_done(t, rid, fields):
           "finish": fields[1] if len(fields) > 1 else None,
           "prompt": None, "gen": None, "cache": None, "reuse": None,
           "ttft_ms": None, "prefill": None, "decode": None, "wall": None,
-          "mtp_round": None, "mtp_pct": None}
+          "mtp_pct": None}
     for f in fields[2:]:
         p = f.split(None, 1)
         if len(p) < 2:
@@ -520,11 +520,6 @@ class Store:
             self.err.append(ev)
             if rid is not None:
                 self.inflight.pop(rid, None)
-        elif k == "rej":
-            self.err.append({"t": ev["t"], "req": rid,
-                             "msg": f"{ev.get('status', '?')} {ev.get('code', '?')}: {ev.get('msg', '')}"})
-            if rid is not None:
-                self.inflight.pop(rid, None)
         elif k == "cancel":
             if rid is not None:
                 self.inflight.pop(rid, None)
@@ -796,7 +791,6 @@ def build_state(st, window):
                                if any(w is not None for w in wall) else None),
                 "avg_decode_tps": _mean([r["decode"] for r in done]),
                 "avg_mtp_pct": _mean([r["mtp_pct"] for r in done]),
-                "avg_mtp_round": _mean([r["mtp_round"] for r in done]),
                 "reuse": reuse,
             }
         else:
@@ -851,12 +845,6 @@ def build_state(st, window):
                    for r in done if r["prompt"] is not None and r["decode"] is not None][-80:]
         _ap = ap or 0
         kv_total = st.kv_total or KV_TOTAL_TOKENS
-        kv_series = _downsample_series(
-            [(s["t"], (s.get("running") or 0) + (s.get("prefilling") or 0),
-              round(((s.get("running") or 0) + (s.get("prefilling") or 0)) * _ap),
-              round(min(100.0, 100.0 * ((s.get("running") or 0) + (s.get("prefilling") or 0)) * _ap
-                        / kv_total), 1) if _ap else None)
-             for s in tp_win])
         if latest and _ap:
             _inf = (latest.get("running") or 0) + (latest.get("prefilling") or 0)
             kv_now = {"in_flight": _inf, "tokens": round(_inf * _ap),
@@ -864,8 +852,7 @@ def build_state(st, window):
         else:
             kv_now = {"in_flight": None, "tokens": None, "pct": None}
         analysis = {"kv_total": kv_total, "avg_prompt": ap,
-                    "ctx_hist": ctx_hist, "scatter": scatter,
-                    "kv_series": kv_series, "kv_now": kv_now}
+                    "ctx_hist": ctx_hist, "scatter": scatter, "kv_now": kv_now}
 
         sd_win = [s for s in st.sd if (s["t"] or 0) >= c0]
         specdec = ({"acc_len": _mean([s["acc_len"] for s in sd_win]),
@@ -878,10 +865,6 @@ def build_state(st, window):
         framework = st.framework
         running = st.running
         state_str = st.state_str
-        image = st.image
-        last_seen = st.last_line_ts
-        docker_ok = st.docker_ok
-        boot = st.boot
         gpu_now = st.gpu_now
         gpu_series = [[round(t, 3), u] for t, u in st.gpu][-160:]
 
@@ -913,11 +896,9 @@ def build_state(st, window):
     }
 
     return {
-        "server": {"now": round(now, 3), "last_poll": round(st.last_poll, 3),
-                   "boot": round(boot, 3), "poll": POLL, "docker_ok": docker_ok},
+        "server": {"now": round(now, 3), "last_poll": round(st.last_poll, 3)},
         "container": {"name": target, "framework": framework, "running": running,
-                      "state": state_str, "image": image, "api_port": SERVE_API_PORT,
-                      "last_seen": round(last_seen, 3),
+                      "state": state_str,
                       "has_parser": framework in PARSERS,
                       "per_request": framework in PER_REQUEST},
         "gpu": {"now": gpu_now, "series": gpu_series},
@@ -928,8 +909,6 @@ def build_state(st, window):
         "peak": round(peak, 1) or 100,
         "series": series,
         "streams": streams,
-        "stream_counts": {"active": len(streams),
-                          "max_age_s": streams[0]["age_s"] if streams else None},
         "conc_series": conc_series,
         "analysis": analysis,
         "specdec": specdec,
@@ -970,15 +949,6 @@ class Handler(BaseHTTPRequestHandler):
                 window = self.window_default
             window = max(10, min(86400, window))
             self._send(200, json.dumps(build_state(self.store, window)), "application/json")
-        elif u.path == "/api/log":
-            try:
-                tail = max(1, min(1000, int(q.get("tail", [150])[0])))
-            except (ValueError, TypeError):
-                tail = 150
-            with self.store.lock:
-                lines = list(self.store.raw)[-tail:]
-                name = self.store.target
-            self._send(200, json.dumps({"container": name, "lines": lines}), "application/json")
         elif u.path == "/api/history":
             try:
                 limit = max(1, min(5000, int(q.get("limit", [200])[0])))
@@ -1425,12 +1395,16 @@ function areaAndLine(x,pts,color,padT,ch,glow){
   x.beginPath();x.arc(L[0],L[1],3.2,0,7);x.fillStyle=color;x.shadowColor=color;x.shadowBlur=9;x.fill();x.shadowBlur=0;
   x.restore();
 }
+function prep(c,H){
+  const dpr=window.devicePixelRatio||1;const W=c.clientWidth;
+  c.width=W*dpr;c.height=H*dpr;
+  const x=c.getContext("2d");x.setTransform(dpr,0,0,dpr,0,0);x.clearRect(0,0,W,H);
+  return [x,W,H];
+}
 function drawSpark(id,vals,color){
   const c=$(id);if(!c||!c.clientWidth)return;
-  const dpr=window.devicePixelRatio||1;const W=c.clientWidth,H=c.clientHeight;
-  if(!W||!H)return;
-  if(c.width!==Math.round(W*dpr)){c.width=W*dpr;c.height=H*dpr;}
-  const x=c.getContext("2d");x.setTransform(dpr,0,0,dpr,0,0);x.clearRect(0,0,W,H);
+  const H=c.clientHeight;if(!H)return;
+  const [x,W]=prep(c,H);
   const v=vals.filter(n=>n!=null);if(v.length<2)return;
   const mn=Math.min(...v),mx=Math.max(...v),rng=(mx-mn)||1;
   const P=vals.map((n,i)=>[i/(vals.length-1)*(W-2)+1,H-2-(((n==null?mn:n)-mn)/rng)*(H-4)]);
@@ -1441,10 +1415,8 @@ function drawSpark(id,vals,color){
 }
 function drawSpark100(id,vals,color){
   const c=$(id);if(!c||!c.clientWidth)return;
-  const dpr=window.devicePixelRatio||1;const W=c.clientWidth,H=c.clientHeight;
-  if(!W||!H)return;
-  if(c.width!==Math.round(W*dpr)){c.width=W*dpr;c.height=H*dpr;}
-  const x=c.getContext("2d");x.setTransform(dpr,0,0,dpr,0,0);x.clearRect(0,0,W,H);
+  const H=c.clientHeight;if(!H)return;
+  const [x,W]=prep(c,H);
   const v=vals.filter(n=>n!=null);if(v.length<2)return;
   const P=vals.map((n,i)=>[i/(vals.length-1)*(W-2)+1,H-2-((n==null?0:n)/100)*(H-4)]);
   x.strokeStyle=C.grid;x.beginPath();x.moveTo(0,H-2);x.lineTo(W,H-2);x.stroke();
@@ -1487,9 +1459,8 @@ function bindTip(c,mode){if(c._tip)return;c._tip=1;
   c.addEventListener("mouseleave",hideTip);}
 
 function drawChart(series,peak,w,now){
-  const c=$("chart");const dpr=window.devicePixelRatio||1;
-  const W=c.clientWidth,H=220;c.width=W*dpr;c.height=H*dpr;
-  const x=c.getContext("2d");x.setTransform(dpr,0,0,dpr,0,0);x.clearRect(0,0,W,H);
+  const c=$("chart");
+  const [x,W,H]=prep(c,220);
   const padL=46,padR=46,padT=12,padB=22;
   const cw=W-padL-padR,ch=H-padT-padB;
   const t1=now,t0=now-w;
@@ -1517,9 +1488,8 @@ function drawChart(series,peak,w,now){
 }
 
 function drawTherm(series,w,now){
-  const c=$("therm_chart");if(!c)return;const dpr=window.devicePixelRatio||1;
-  const W=c.clientWidth,H=220;c.width=W*dpr;c.height=H*dpr;
-  const x=c.getContext("2d");x.setTransform(dpr,0,0,dpr,0,0);x.clearRect(0,0,W,H);
+  const c=$("therm_chart");if(!c)return;
+  const [x,W,H]=prep(c,220);
   const padL=42,padR=12,padT=12,padB=22;
   const cw=W-padL-padR,ch=H-padT-padB;
   const t1=now,t0=now-w;
@@ -1546,9 +1516,8 @@ function drawTherm(series,w,now){
 }
 
 function drawConc(series,w,now){
-  const c=$("conc_chart");const dpr=window.devicePixelRatio||1;
-  const W=c.clientWidth,H=150;c.width=W*dpr;c.height=H*dpr;
-  const x=c.getContext("2d");x.setTransform(dpr,0,0,dpr,0,0);x.clearRect(0,0,W,H);
+  const c=$("conc_chart");
+  const [x,W,H]=prep(c,150);
   const padL=30,padR=10,padT=10,padB=18;
   const cw=W-padL-padR,ch=H-padT-padB;
   const t1=now,t0=now-w;
@@ -1573,9 +1542,8 @@ function drawConc(series,w,now){
 }
 
 function drawHistogram(buckets){
-  const c=$("hist_chart");const dpr=window.devicePixelRatio||1;
-  const W=c.clientWidth,H=Math.max(c.clientHeight||170,170);c.width=W*dpr;c.height=H*dpr;
-  const x=c.getContext("2d");x.setTransform(dpr,0,0,dpr,0,0);x.clearRect(0,0,W,H);
+  const c=$("hist_chart");
+  const [x,W,H]=prep(c,Math.max(c.clientHeight||170,170));
   const padB=20,padT=14,n=buckets.length;if(!n){x.fillStyle=C.dim;x.fillText("no completed requests",10,30);return;}
   const maxN=Math.max(1,...buckets.map(b=>b.n));
   const bw=(W-16)/n,barW=bw*0.56,base=H-padB,chartH=base-padT;
@@ -1601,9 +1569,8 @@ function drawHistogram(buckets){
   x.textAlign="left";
 }
 function drawScatter(pts){
-  const c=$("scatter_chart");const dpr=window.devicePixelRatio||1;
-  const W=c.clientWidth,H=Math.max(c.clientHeight||170,170);c.width=W*dpr;c.height=H*dpr;
-  const x=c.getContext("2d");x.setTransform(dpr,0,0,dpr,0,0);x.clearRect(0,0,W,H);
+  const c=$("scatter_chart");
+  const [x,W,H]=prep(c,Math.max(c.clientHeight||170,170));
   const padL=34,padR=10,padT=10,padB=20;
   const cw=W-padL-padR,ch=H-padT-padB;
   if(!pts||pts.length<2){x.fillStyle=C.dim;x.fillText("need ≥2 completed requests",padL+6,padT+24);return;}
