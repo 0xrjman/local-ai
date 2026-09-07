@@ -102,12 +102,36 @@ MAX_CONCURRENCY="${MAX_CONCURRENCY:-4}"
 # off buys ~12% more pool (available-after-weights 10.82 -> 11.10 GiB), not the
 # whole media reservation. All pairs keep MTP3 speculative decoding.
 VISION="${VISION:-1}"
-case "$VISION:$KV_DTYPE" in
-  1:fp8)   VISION_FLAG=(--vision); MAX_CONTEXT=188224 ;;
-  1:nvfp4) VISION_FLAG=(--vision); MAX_CONTEXT=262144 ;;
-  0:fp8)   VISION_FLAG=();         MAX_CONTEXT=251392 ;;
-  0:nvfp4) VISION_FLAG=();         MAX_CONTEXT=262144 ;;
-  *) echo "no measured KV pool for VISION=$VISION KV_DTYPE=$KV_DTYPE;" \
+# ---- speculative decoding: dflash2 (default) | mtp ------------------------
+# dflash2 bundles the companion draft model in the v2 artifact (recipe
+# qwen3_8_27b_nvfp4-v2, source z-lab/Qwen3.8-27B-DFlash2); mtp uses the
+# in-artifact draft. Both accept --lm-head-draft. K range: mtp [1,5], dflash2
+# [1,15]. Default K=7 (manifest value). 2026-09-08 A/B vs K=12 (8 prompts,
+# sequential, temp 0): decode within noise (mean 211.7 vs 203.7 tok/s, median
+# opposite) but acceptance consistently higher at 7 (35.8% vs 23.8%, 8/8
+# prompts) -- K=12's extra drafts rarely accept, wasted verification.
+SPEC="${SPEC:-dflash2}"
+case "$SPEC" in
+  dflash2) DRAFT_TOKENS="${DRAFT_TOKENS:-7}" ;;
+  mtp)     DRAFT_TOKENS="${DRAFT_TOKENS:-3}" ;;
+  *) echo "SPEC must be dflash2|mtp (got '$SPEC')" >&2; exit 1 ;;
+esac
+# dflash2 loads the ~2.07 GiB draft model on top of the base weights, shrinking
+# the device KV pool vs mtp, so its max-context stays below the mtp value for
+# the same (VISION, KV_DTYPE). dflash2:1:nvfp4 pool 188,416 tokens (vs 410,944
+# for mtp); 188K verified runnable, but max-context is kept at 180,704 to leave
+# headroom for a 2nd concurrent long request under MAX_CONCURRENCY=4. The other
+# dflash2 rows are first-cuts.
+case "$SPEC:$VISION:$KV_DTYPE" in
+  mtp:1:fp8)     VISION_FLAG=(--vision); MAX_CONTEXT=188224 ;;
+  mtp:1:nvfp4)   VISION_FLAG=(--vision); MAX_CONTEXT=262144 ;;
+  mtp:0:fp8)     VISION_FLAG=();         MAX_CONTEXT=251392 ;;
+  mtp:0:nvfp4)   VISION_FLAG=();         MAX_CONTEXT=262144 ;;
+  dflash2:1:fp8)   VISION_FLAG=(--vision); MAX_CONTEXT=155648 ;;
+  dflash2:1:nvfp4) VISION_FLAG=(--vision); MAX_CONTEXT=245760; KV_CAPACITY=245760 ;;
+  dflash2:0:fp8)   VISION_FLAG=();         MAX_CONTEXT=200704 ;;
+  dflash2:0:nvfp4) VISION_FLAG=();         MAX_CONTEXT=200704 ;;
+  *) echo "no measured KV pool for SPEC=$SPEC VISION=$VISION KV_DTYPE=$KV_DTYPE;" \
           "read kv_capacity_tokens from a trial start and add a row" >&2; exit 1 ;;
 esac
 # Re-inject prior-turn reasoning into later prompts (keeps agent long-conversations
@@ -142,11 +166,11 @@ start() {
     --host 0.0.0.0 --port ${PORT} --cors \
     --request-log-jsonl /reqlog/requests.jsonl \
     "${API_ARGS[@]}" --model-id ${MODEL_ID} \
-    --max-context ${MAX_CONTEXT} --kv-capacity auto --kv-dtype ${KV_DTYPE} \
+    --max-context ${MAX_CONTEXT} --kv-capacity ${KV_CAPACITY:-auto} --kv-dtype ${KV_DTYPE} \
     --max-concurrency ${MAX_CONCURRENCY} --pending-timeout-ms 90000 --host-kv-mib ${HOST_KV_MIB} \
     "${VISION_FLAG[@]}" \
     "${PRESERVE_FLAG[@]}" \
-    --spec mtp --draft-tokens 3 --lm-head-draft
+    --spec "$SPEC" --draft-tokens "$DRAFT_TOKENS" --lm-head-draft
   echo "started, tail logs with: $0 logs"
   # resolve symlink first: when invoked via a symlink (e.g. ~/.local/bin/start-ninfer.sh),
   # BASH_SOURCE is the link itself, so dirname/.. would mis-resolve away from profiles/

@@ -197,8 +197,8 @@ def _ninfer_tp(t, fields):
 
 def _ninfer_done(t, rid, fields):
     """`<proto> | <finish> | prompt N | output N | cache N (X%[, path]) | TTFT d |
-    total d | [queue d |] prefill X tok/s | decode Y tok/s | mtp ...` -- the
-    prefill/decode/mtp sections are absent on cancelled requests."""
+    total d | [queue d |] prefill X tok/s | decode Y tok/s | [mtp|dflash2] accepted N/M (P%)`
+    -- the prefill/decode/spec sections are absent on cancelled requests."""
     ev = {"kind": "done", "t": t, "req": rid,
           "finish": fields[1] if len(fields) > 1 else None,
           "prompt": None, "gen": None, "cache": None, "reuse": None,
@@ -225,7 +225,7 @@ def _ninfer_done(t, rid, fields):
             ev["wall"] = _dur(val)
         elif label in ("prefill", "decode"):
             ev[label] = _f(val)
-        elif label == "mtp":
+        elif label in ("mtp", "dflash2"):
             m = re.match(r"accepted\s+([\d,]+)/([\d,]+)\s*\(([\d.]+)%\)", val)
             if m:
                 ev["mtp_pct"] = _f(m.group(3))
@@ -390,6 +390,7 @@ def pull_jsonl(st, path):
     last_nl = buf.rfind(b"\n")
     if last_nl < 0:
         return               # no complete line yet; re-read next poll
+    got = False
     for ln in buf[:last_nl + 1].split(b"\n"):
         ln = ln.strip()
         if not ln:
@@ -401,6 +402,9 @@ def pull_jsonl(st, path):
         if rec.get("event") != "throughput":
             continue
         st.workload.append(_workload(rec))
+        got = True
+    if got:
+        st.jsonl_last_seen = time.time()   # host clock; sample's own ts is not the host clock
     st.jsonl_off = off + last_nl + 1
 
 
@@ -471,6 +475,7 @@ class Store:
         self.boot = time.time()
         self.lock = threading.Lock()
         self.jsonl_off = None      # byte offset into NINFER_JSONL (None = not started yet)
+        self.jsonl_last_seen = None   # host wall-clock of last ingested JSONL event (staleness basis)
         self.workload = deque(maxlen=WORKLOAD_MAX)   # recent ninfer throughput windows
 
     def reset_target(self, name):
@@ -487,6 +492,7 @@ class Store:
         self.kv_total = None
         self.kv_started = None
         self.jsonl_off = None
+        self.jsonl_last_seen = None
         self.workload.clear()
         self.target = name
         self.framework = SERVED_FW.get(name, name)
@@ -597,7 +603,17 @@ def record(conn, container, framework, evs):
             pass
 
 
-RETENTION = 86400  # seconds of throughput/requests history to keep
+TP_ROW_CAP = (1 << 30) // 200  # ~1GiB row cap (~200 B/row); distant cap, no daily prune
+
+
+def _trim(conn, table, cap):
+    n = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+    if n > cap:
+        row = conn.execute(
+            f"SELECT ts FROM {table} ORDER BY ts DESC LIMIT 1 OFFSET ?",
+            (cap,)).fetchone()
+        if row:
+            conn.execute(f"DELETE FROM {table} WHERE ts < ?", (row[0],))
 
 
 def poll_loop(st, tail, conn):
@@ -660,10 +676,9 @@ def poll_loop(st, tail, conn):
                 pass
         if prune_therm is not None:
             try:
-                cutoff = now - RETENTION
                 conn.execute("DELETE FROM thermal WHERE ts < ?", (prune_therm,))
-                conn.execute("DELETE FROM throughput WHERE ts < ?", (cutoff,))
-                conn.execute("DELETE FROM requests WHERE ts < ?", (cutoff,))
+                _trim(conn, "throughput", TP_ROW_CAP)
+                _trim(conn, "requests", TP_ROW_CAP)
                 conn.commit()
             except sqlite3.Error:
                 pass
@@ -729,23 +744,53 @@ def _mean(xs):
     return round(sum(xs) / len(xs), 1) if xs else None
 
 
-def build_state(st, window):
+def _tp_history(conn, container, c0, now):
+    try:
+        rows = conn.execute(
+            "SELECT ts,decode,prefill,running,prefilling,waiting FROM throughput "
+            "WHERE ts >= ? AND ts <= ? AND container = ? ORDER BY ts", (c0, now, container)).fetchall()
+    except sqlite3.Error:
+        rows = []
+    return [{"t": r[0], "decode": r[1], "prefill": r[2], "running": r[3],
+             "prefilling": r[4], "waiting": r[5]} for r in rows]
+
+
+def build_state(st, window, conn):
     now = time.time()
     c0 = now - window
 
     with st.lock:
         tp_win = [s for s in st.tp if (s["t"] or 0) >= c0]
+        # window longer than the samples held in RAM -> source it from the sqlite
+        # history (the in-memory deque can't reach back that far; DB retains 1 day)
+        from_db = not (st.tp and (st.tp[0]["t"] or 0) <= c0)
+        if from_db:
+            tp_win = _tp_history(conn, st.target, c0, now)
         latest = st.tp[-1] if st.tp else None
-        series = _downsample([(s["t"], s["decode"] or 0, s["prefill"] or 0) for s in tp_win])
+        # long windows come from the DB and are aggregated to a light polyline so
+        # the 12h span doesn't ship thousands of raw points to the client
+        _pts = [(s["t"], s["decode"] or 0, s["prefill"] or 0) for s in tp_win]
+        series = _downsample_series(_pts) if from_db else _downsample(_pts)
 
         dec = [s["decode"] for s in tp_win]
         pre = [s["prefill"] for s in tp_win]
         active = [s for s in tp_win if (s["running"] or 0) > 0]
+        # decode_beats = beats with decode>0; active_beats = beats with decode>0 or prefill>0 (not idle).
+        # avg_decode = window-mean incl. idle zeros (superseded by the two rows below); keep for API compat.
+        decode_beats = [s["decode"] for s in tp_win if (s["decode"] or 0) > 0]
+        active_beats = [s["decode"] for s in tp_win if (s["decode"] or 0) > 0 or (s["prefill"] or 0) > 0]
+        avg_decoding = _mean(decode_beats)
+        avg_effective = _mean(active_beats)
+        overhead = (round((1.0 - avg_effective / avg_decoding) * 100.0, 1)
+                    if avg_decoding and avg_effective is not None else None)
 
         tp_metrics = {
-            "avg_decode": _mean([v for v in dec if (v or 0) > 0]),
+            "avg_decode": _mean(dec),
             "peak_decode": round(max(dec), 1) if dec else None,
-            "avg_prefill": _mean([v for v in pre if (v or 0) > 0]),
+            "avg_decode_decoding": avg_decoding,
+            "avg_decode_effective": avg_effective,
+            "prefill_overhead_pct": overhead,
+            "avg_prefill": _mean(pre),
             "peak_prefill": round(max(pre), 1) if pre else None,
             "active_pct": round(100.0 * len(active) / len(tp_win), 1) if tp_win else None,
             "samples": len(tp_win),
@@ -870,8 +915,8 @@ def build_state(st, window):
 
         wl_latest = st.workload[-1] if st.workload else None
         wl_stale = None
-        if wl_latest and wl_latest.get("ts"):
-            wl_stale = now - wl_latest["ts"] / 1000.0
+        if st.jsonl_last_seen is not None:
+            wl_stale = now - st.jsonl_last_seen
         workload = {
             "has": bool(st.workload),
             "latest": wl_latest,
@@ -948,7 +993,7 @@ class Handler(BaseHTTPRequestHandler):
             except (ValueError, TypeError):
                 window = self.window_default
             window = max(10, min(86400, window))
-            self._send(200, json.dumps(build_state(self.store, window)), "application/json")
+            self._send(200, json.dumps(build_state(self.store, window, self.conn)), "application/json")
         elif u.path == "/api/history":
             try:
                 limit = max(1, min(5000, int(q.get("limit", [200])[0])))
@@ -1238,7 +1283,7 @@ canvas.hist,canvas.scatter{height:auto;min-height:170px;flex:1}
     <div class="content">
     <div class="grid">
     <div class="card dec"><div class="ct"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg></span><span class="k">Decode TPS</span><span class="ks">now</span></div><div class="cv" id="c_dec">-</div><div class="cu">tokens/s<canvas id="spark_dec"></canvas></div></div>
-    <div class="card dec"><div class="ct"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg></span><span class="k">Decode TPS</span><span class="ks">avg</span></div><div class="cv" id="c_dec_avg">-</div><div class="cu" id="u_dec_avg">window</div></div>
+    <div class="card dec"><div class="ct"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg></span><span class="k">Decode TPS</span><span class="ks">avg</span></div><div class="cv" id="c_dec_avg1">-</div><div class="cu" id="u_dec_avg1">window</div></div>
     <div class="card dec"><div class="ct"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg></span><span class="k">Decode TPS</span><span class="ks">peak</span></div><div class="cv" id="c_dec_peak">-</div><div class="cu" id="u_dec_peak">window</div></div>
     <div class="card"><div class="ct"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></span><span class="k">Requests</span><span class="ks">live</span></div><div class="cv" id="c_run">-</div><div class="cu" id="u_run">running / waiting</div></div>
     <div class="card pre"><div class="ct"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg></span><span class="k">Prefill TPS</span><span class="ks">now</span></div><div class="cv" id="c_pre">-</div><div class="cu">tokens/s<canvas id="spark_pre"></canvas></div></div>
@@ -1251,6 +1296,19 @@ canvas.hist,canvas.scatter{height:auto;min-height:170px;flex:1}
     <div class="ph"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg></span><h2>Throughput</h2><span class="note" id="chart_note">tokens/s</span></div>
     <canvas id="chart"></canvas>
     <div class="legend"><span><i style="background:var(--dec)"></i>decode (generation)</span><span><i style="background:var(--pre)"></i>prefill</span><span class="dim">left=decode · right=prefill, auto-scaled</span></div>
+    <div class="row">
+      <div class="panel">
+        <div class="ph"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg></span><h2>Concurrent streams</h2><span class="note" id="stream_note"></span></div>
+        <div class="streams" id="streams"></div>
+        <div class="subhead">recently completed &middot; short-term</div>
+        <div class="sdone" id="streams_done"></div>
+      </div>
+      <div class="panel">
+        <div class="ph"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M8 17v-5M13 17V6M18 17v-8"/></svg></span><h2>Concurrency over time</h2><span class="note" id="conc_note"></span></div>
+        <canvas id="conc_chart" class="conc"></canvas>
+        <div class="legend"><span><i style="background:var(--run)"></i>running</span><span><i style="background:var(--pre)"></i>prefilling</span><span><i style="background:var(--wait)"></i>waiting</span></div>
+      </div>
+    </div>
   </div>
 
   <div class="panel tabpane" id="tp-therm" data-tab="therm">
@@ -1259,22 +1317,9 @@ canvas.hist,canvas.scatter{height:auto;min-height:170px;flex:1}
     <div class="legend"><span><i style="background:var(--dec)"></i>GPU core °C</span><span><i style="background:var(--pre)"></i>CPU package °C</span><span class="dim" id="therm_fan"></span></div>
   </div>
 
-  <div class="row tabpane" id="tp-streams" data-tab="streams">
-    <div class="panel">
-      <div class="ph"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg></span><h2>Concurrent streams</h2><span class="note" id="stream_note"></span></div>
-      <div class="streams" id="streams"></div>
-      <div class="subhead"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg>recently completed &middot; short-term</div>
-      <div class="sdone" id="streams_done"></div>
-    </div>
-    <div class="panel">
-      <div class="ph"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M8 17v-5M13 17V6M18 17v-8"/></svg></span><h2>Concurrency over time</h2><span class="note" id="conc_note"></span></div>
-      <canvas id="conc_chart" class="conc"></canvas>
-      <div class="legend"><span><i style="background:var(--run)"></i>running</span><span><i style="background:var(--pre)"></i>prefilling</span><span><i style="background:var(--wait)"></i>waiting</span></div>
-    </div>
-  </div>
 
-  <div class="panel tabpane" id="tp-load" data-tab="load">
-    <div class="ph"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><rect x="7" y="10" width="3" height="7" rx="1"/><rect x="12" y="6" width="3" height="11" rx="1"/><rect x="17" y="13" width="3" height="4" rx="1"/></svg></span><h2>Load &middot; KV &middot; context</h2><span class="note" id="load_note"></span></div>
+  <div class="panel tabpane" id="tp-capacity" data-tab="capacity">
+    <div class="ph"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><rect x="7" y="10" width="3" height="7" rx="1"/><rect x="12" y="6" width="3" height="11" rx="1"/><rect x="17" y="13" width="3" height="4" rx="1"/></svg></span><h2>Capacity &middot; KV &middot; context</h2><span class="note" id="load_note"></span></div>
     <div class="loadrow">
       <div class="loadcol">
         <div class="kvbox">
@@ -1298,37 +1343,7 @@ canvas.hist,canvas.scatter{height:auto;min-height:170px;flex:1}
       <div class="loadchart"><div class="subhead2">context length distribution</div><canvas id="hist_chart"></canvas><div class="hleg" id="hist_legend"></div></div>
       <div class="loadchart"><div class="subhead2">context &times; decode tok/s <span class="dim">(color = ttft)</span></div><canvas id="scatter_chart"></canvas></div>
     </div>
-  </div>
-
-  <div class="row tabpane" id="tp-req" data-tab="req">
-    <div class="panel">
-      <div class="ph"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg></span><h2>Requests</h2><span class="note" id="req_note"></span></div>
-      <div class="kv" id="req_kv"></div>
-      <div class="subhead"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></svg>Cache reuse</div>
-      <div id="reuse" class="muted">-</div>
-      <div class="subhead"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3z"/></svg>Spec decoding</div>
-      <div id="specdec" class="muted">-</div>
-    </div>
-    <div class="panel">
-      <div class="ph"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg></span><h2>Live queue &middot; errors</h2></div>
-      <div class="kv" id="live_kv"></div>
-      <div class="subhead"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3z"/><path d="M12 9v4M12 17h.01"/></svg>Recent errors</div>
-      <div id="errs" class="muted">none</div>
-    </div>
-  </div>
-
-  <div class="panel tabpane" id="tp-recent" data-tab="recent">
-    <div class="ph"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3h18v18H3z"/><path d="M3 9h18M9 3v18"/></svg></span><h2>Recent requests</h2><span class="note">last 30 · newest first</span></div>
-    <div style="overflow-x:auto"><table><thead><tr><th>time</th><th>req</th><th>finish</th><th>prompt</th><th>gen</th><th>ttft</th><th>dec/s</th><th>wall</th><th>mtp</th></tr></thead><tbody id="req_rows"></tbody></table></div>
-  </div>
-
-  <div class="panel tabpane" id="tp-log" data-tab="log">
-    <div class="ph"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="m4 17 6-6-6-6"/><path d="M12 19h8"/></svg></span><h2>Raw log</h2><span class="note">newest first · live tail</span></div>
-    <div class="log" id="log"></div>
-  </div>
-
-  <div class="panel tabpane" id="tp-workload" data-tab="workload">
-    <div class="ph"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9z"/></svg></span><h2>Workload · efficiency</h2><span class="note" id="wl_note"></span></div>
+    <div class="subhead">efficiency &middot; decode share of GPU time <span class="note" id="wl_note"></span></div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
       <div class="kvbox">
         <div class="kvl"><span>Decode 产出占比</span><span class="kvtag">decode share of GPU time</span></div>
@@ -1347,12 +1362,41 @@ canvas.hist,canvas.scatter{height:auto;min-height:170px;flex:1}
     <div class="subhead">decode share of GPU time · recent trend</div>
     <canvas id="wl_spark" class="spark"></canvas>
   </div>
+
+  <div class="tabpane" id="tp-req" data-tab="req">
+    <div class="row">
+    <div class="panel">
+      <div class="ph"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg></span><h2>Requests</h2><span class="note" id="req_note"></span></div>
+      <div class="kv" id="req_kv"></div>
+      <div class="subhead"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></svg>Cache reuse</div>
+      <div id="reuse" class="muted">-</div>
+      <div class="subhead"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3z"/></svg>Spec decoding</div>
+      <div id="specdec" class="muted">-</div>
+    </div>
+    <div class="panel">
+      <div class="ph"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg></span><h2>Live queue &middot; errors</h2></div>
+      <div class="kv" id="live_kv"></div>
+      <div class="subhead"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3z"/><path d="M12 9v4M12 17h.01"/></svg>Recent errors</div>
+      <div id="errs" class="muted">none</div>
+    </div>
+    </div>
+    <div class="panel">
+      <div class="ph"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3h18v18H3z"/><path d="M3 9h18M9 3v18"/></svg></span><h2>Recent requests</h2><span class="note">last 30 · newest first</span></div>
+      <div style="overflow-x:auto"><table><thead><tr><th>time</th><th>req</th><th>finish</th><th>prompt</th><th>gen</th><th>ttft</th><th>dec/s</th><th>wall</th><th>spec</th></tr></thead><tbody id="req_rows"></tbody></table></div>
+    </div>
+  </div>
+
+  <div class="panel tabpane" id="tp-log" data-tab="log">
+    <div class="ph"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="m4 17 6-6-6-6"/><path d="M12 19h8"/></svg></span><h2>Raw log</h2><span class="note">newest first · live tail</span></div>
+    <div class="log" id="log"></div>
+  </div>
+
     </div>
   </div>
 </div>
 
 <script>
-const WINS=[[60,"1m"],[300,"5m"],[900,"15m"],[3600,"1h"]];
+const WINS=[[60,"1m"],[300,"5m"],[900,"15m"],[3600,"1h"],[43200,"12h"]];
 let win=300;
 const $=id=>document.getElementById(id);
 let LAST=null;
@@ -1610,13 +1654,14 @@ function render(s){
   badge.className=bcls;badge.innerHTML='<span class="bdot"></span>'+btxt;
   $("meta").textContent="updated "+Math.max(0,Math.round(s.server.now-s.server.last_poll))+"s ago · auto 2s";
 
-  const wlabel={60:"1m",300:"5m",900:"15m",3600:"1h"}[win]||win+"s";
+  const wlabel={60:"1m",300:"5m",900:"15m",3600:"1h",43200:"12h"}[win]||win+"s";
   $("c_dec").textContent=l.idle?"idle":fmt(l.decode_tps);
-  $("c_dec_avg").textContent=fmt(tp.avg_decode);$("u_dec_avg").textContent=wlabel+" · active · "+(tp.samples||0)+" samples";
-  $("c_dec_peak").textContent=fmt(tp.peak_decode);$("u_dec_peak").textContent=wlabel;
+  $("c_dec_avg1").textContent=fmt(tp.avg_decode_decoding);
+  {const dsegs=[];if(tp.avg_decode_effective!=null)dsegs.push("eff "+fmt(tp.avg_decode_effective,1));if(tp.prefill_overhead_pct!=null)dsegs.push("−"+fmt(tp.prefill_overhead_pct,1)+"% prefill");dsegs.push(wlabel);$("u_dec_avg1").textContent=dsegs.join(" · ");}
+  $("c_dec_peak").textContent=fmt(tp.peak_decode);$("u_dec_peak").textContent=wlabel+" · max 1 beat";
   $("c_pre").textContent=l.idle?"idle":fmt(l.prefill_tps);
-  $("c_pre_avg").textContent=fmt(tp.avg_prefill);$("u_pre_avg").textContent=wlabel+" · active";
-  $("c_pre_peak").textContent=fmt(tp.peak_prefill);$("u_pre_peak").textContent=wlabel;
+  $("c_pre_avg").textContent=fmt(tp.avg_prefill);$("u_pre_avg").textContent=wlabel+" · mean";
+  $("c_pre_peak").textContent=fmt(tp.peak_prefill);$("u_pre_peak").textContent=wlabel+" · max 1 beat";
   $("c_run").textContent=(l.running==null?"-":l.running)+" / "+(l.waiting==null?"-":l.waiting);
   $("u_run").textContent="prefilling "+(l.prefilling==null?"-":l.prefilling);
   $("c_active").textContent=tp.active_pct==null?"-":fmt(tp.active_pct,1)+"%";
@@ -1684,7 +1729,7 @@ function render(s){
     const w=r.wall;const wcol=w==null?C.dim:w<30?C.run:w<120?C.pre:C.err;
     const ctx=r.prompt==null?"?":(r.prompt>=1000?(+(r.prompt/1000).toFixed(1))+"k":r.prompt);
     return `<div class="d"><span class="rid">#${r.req}</span>
-      <span class="m">${ctx} ctx · ${r.gen==null?"?":fmt0(r.gen)} gen · ttft ${ms(r.ttft_ms)} · mtp ${mtpCell(r.mtp_pct)} ${cbadge(r)}</span>
+      <span class="m">${ctx} ctx · ${r.gen==null?"?":fmt0(r.gen)} gen · ttft ${ms(r.ttft_ms)} · spec ${mtpCell(r.mtp_pct)} ${cbadge(r)}</span>
       <span class="wall" style="color:${wcol}">${w==null?"-":fmt(w,1)+"s"}</span></div>`;
   }).join(""):'<div class="empty">no completed requests yet</div>';
   drawConc(s.conc_series,win,s.server.now);
@@ -1734,7 +1779,7 @@ function render(s){
     ["output",R.agg_tok_s==null?"-":fmt(R.agg_tok_s)+" tok/s"],
     ["ttft avg",ms(R.avg_ttft_ms)],["ttft p50",ms(R.p50_ttft_ms)],["ttft p95",ms(R.p95_ttft_ms)],
     ["wall avg",R.avg_wall_s==null?"-":fmt(R.avg_wall_s,1)+"s"],["wall max",R.max_wall_s==null?"-":fmt(R.max_wall_s,1)+"s"],
-    ["mtp accept",R.avg_mtp_pct==null?"-":fmt(R.avg_mtp_pct,1)+"%"],
+    ["spec accept",R.avg_mtp_pct==null?"-":fmt(R.avg_mtp_pct,1)+"%"],
   ]);
   const reuse=R.reuse||{};
   const rk=Object.keys(reuse);
@@ -1817,7 +1862,7 @@ async function fetch_(){
     $("meta").textContent="unreachable: "+e;
   }
 }
-const TABS=[["throughput","&#128200;","Throughput"],["workload","&#9889;","Workload"],["therm","&#127777;","Thermal"],["streams","&#128256;","Streams"],["load","&#128202;","Load · KV · Ctx"],["req","&#128230;","Req · Queue"],["recent","&#128344;","Recent"],["log","&#128220;","Log"]];
+const TABS=[["throughput","&#128200;","Throughput"],["capacity","&#128202;","Capacity"],["therm","&#127777;","Thermal"],["req","&#128230;","Requests"],["log","&#128220;","Log"]];
 let activeTab=(()=>{const t=new URLSearchParams(location.search).get("tab");return TABS.some(x=>x[0]===t)?t:"throughput";})();
 function buildSidebar(){
   const nav=$("sb_nav");nav.innerHTML="";
@@ -1839,17 +1884,14 @@ function setTab(key){
 function drawTab(key){
   if(!LAST)return;const s=LAST;
   if(key==="throughput")drawChart(s.series,s.peak,win,s.server.now);
-  else if(key==="therm")drawTherm((s.thermal||{}).series,win,s.server.now);
-  else if(key==="streams")drawConc(s.conc_series,win,s.server.now);
-  else if(key==="load"){
+  else if(key==="capacity"){
     const A=s.analysis||{};drawHistogram(A.ctx_hist||[]);drawScatter(A.scatter||[]);
     const gser=((s.gpu||{}).series||[]).map(p=>p[1]).filter(v=>v!=null);
     if(gser.length)drawSpark100("gpu_spark",gser.slice(-120),C.dec);
-  }
-  else if(key==="workload"){
     const wser=((s.workload||{}).series||[]).map(p=>p[0]==null?null:p[0]*100).filter(v=>v!=null);
     if(wser.length)drawSpark100("wl_spark",wser.slice(-120),C.dec);
   }
+  else if(key==="therm")drawTherm((s.thermal||{}).series,win,s.server.now);
 }
 function initSidebar(){
   const t=$("sb_toggle"),sb=$("sidebar");
