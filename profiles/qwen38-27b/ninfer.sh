@@ -128,7 +128,7 @@ case "$SPEC:$VISION:$KV_DTYPE" in
   mtp:0:fp8)     VISION_FLAG=();         MAX_CONTEXT=251392 ;;
   mtp:0:nvfp4)   VISION_FLAG=();         MAX_CONTEXT=262144 ;;
   dflash2:1:fp8)   VISION_FLAG=(--vision); MAX_CONTEXT=155648 ;;
-  dflash2:1:nvfp4) VISION_FLAG=(--vision); MAX_CONTEXT=245760; KV_CAPACITY=245760 ;;
+  dflash2:1:nvfp4) VISION_FLAG=(--vision); MAX_CONTEXT=237568; KV_CAPACITY=237568 ;;
   dflash2:0:fp8)   VISION_FLAG=();         MAX_CONTEXT=200704 ;;
   dflash2:0:nvfp4) VISION_FLAG=();         MAX_CONTEXT=200704 ;;
   *) echo "no measured KV pool for SPEC=$SPEC VISION=$VISION KV_DTYPE=$KV_DTYPE;" \
