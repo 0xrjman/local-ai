@@ -30,7 +30,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # container name -> framework
-SERVED = [("vllm-qwen38", "vllm"), ("sglang-qwen38", "sglang"), ("ninfer-qwen38-27b", "ninfer")]
+SERVED = [("vllm-qwen38", "vllm"), ("sglang-qwen38", "sglang"), ("ninfer-qwen38-27b", "ninfer"), ("ninfer-ornith-35b-a3b", "ninfer")]
 SERVED_NAMES = {n for n, _ in SERVED}
 SERVED_FW = dict(SERVED)
 SERVE_API_PORT = 8020   # OpenAI endpoint all profiles expose
