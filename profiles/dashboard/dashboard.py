@@ -732,7 +732,7 @@ def _tp_history(conn, container, c0, now):
              "prefilling": r[4], "waiting": r[5]} for r in rows]
 
 
-def build_state(st, window, conn):
+def build_state(st, window, conn, req_n=30):
     now = time.time()
     c0 = now - window
 
@@ -819,11 +819,25 @@ def build_state(st, window, conn):
             req_agg = {}
         req_counts = {"done": len(done), "submitted": len(subs), "errors": len(errs)}
 
-        recent_req = [{"t": r["t"], "req": r["req"], "finish": r["finish"],
-                       "prompt": r["prompt"], "gen": r["gen"], "ttft_ms": r["ttft_ms"],
-                       "decode": r["decode"], "wall": r["wall"], "mtp_pct": r["mtp_pct"],
-                       "cache": r.get("cache"), "reuse": r.get("reuse")}
-                      for r in list(st.req)[-30:]][::-1]
+        # source from the DB (kind=done, newest first) so req_n can reach the full
+        # history, not just the small in-memory live buffer; fall back to st.req if no conn
+        recent_req = None
+        if conn is not None:
+            try:
+                _rows = conn.execute(
+                    "SELECT ts,req,finish,prompt,gen,ttft_ms,decode,wall,mtp_pct,cache,reuse "
+                    "FROM requests WHERE kind='done' ORDER BY ts DESC LIMIT ?", (req_n,)).fetchall()
+                recent_req = [{"t": r[0], "req": r[1], "finish": r[2], "prompt": r[3], "gen": r[4],
+                               "ttft_ms": r[5], "decode": r[6], "wall": r[7], "mtp_pct": r[8],
+                               "cache": r[9], "reuse": r[10]} for r in _rows]
+            except sqlite3.Error:
+                recent_req = None
+        if recent_req is None:
+            recent_req = [{"t": r["t"], "req": r["req"], "finish": r["finish"],
+                           "prompt": r["prompt"], "gen": r["gen"], "ttft_ms": r["ttft_ms"],
+                           "decode": r["decode"], "wall": r["wall"], "mtp_pct": r["mtp_pct"],
+                           "cache": r.get("cache"), "reuse": r.get("reuse")}
+                          for r in list(st.req)[-req_n:]][::-1]
         recent_err = [{"t": e["t"], "req": e["req"], "msg": e["msg"]}
                       for e in list(st.err)[-20:]][::-1]
         raw = list(st.raw)[-140:]
@@ -970,7 +984,12 @@ class Handler(BaseHTTPRequestHandler):
             except (ValueError, TypeError):
                 window = self.window_default
             window = max(10, min(86400, window))
-            self._send(200, json.dumps(build_state(self.store, window, self.conn)), "application/json")
+            try:
+                req_n = int(q.get("req", ["30"])[0])
+            except (ValueError, TypeError):
+                req_n = 30
+            req_n = max(1, min(MAX_REQ, req_n))
+            self._send(200, json.dumps(build_state(self.store, window, self.conn, req_n)), "application/json")
         else:
             self._send(404, "not found", "text/plain")
 
@@ -1340,7 +1359,7 @@ canvas.hist,canvas.scatter{height:auto;min-height:170px;flex:1}
     </div>
     </div>
     <div class="panel">
-      <div class="ph"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3h18v18H3z"/><path d="M3 9h18M9 3v18"/></svg></span><h2>Recent requests</h2><span class="note">last 30 · newest first</span></div>
+      <div class="ph"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3h18v18H3z"/><path d="M3 9h18M9 3v18"/></svg></span><h2>Recent requests</h2><select id="reqn_sel" title="how many recent requests to show" style="margin-left:auto;font:11.5px var(--mono);color:var(--muted);background:var(--panel-2);border:1px solid var(--border-2);border-radius:6px;padding:1px 6px"><option value="30">30</option><option value="100">100</option><option value="500">500</option><option value="2000">2000</option></select><span class="note" id="reqn_note" style="margin-left:8px">· newest first</span></div>
       <div style="overflow-x:auto"><table><thead><tr><th>time</th><th>req</th><th>finish</th><th>prompt</th><th>gen</th><th>ttft</th><th>dec/s</th><th>wall</th><th>spec</th></tr></thead><tbody id="req_rows"></tbody></table></div>
     </div>
   </div>
@@ -1761,6 +1780,7 @@ function render(s){
     <td style="color:${ctxColor(r.prompt)};font-weight:600" title="${r.prompt!=null?CTXL[ctxBand(r.prompt)]:""}">${fmt0(r.prompt)}</td><td>${fmt0(r.gen)}</td><td>${ms(r.ttft_ms)}</td>
     <td>${fmt(r.decode)}</td><td>${r.wall==null?"-":fmt(r.wall,1)+"s"}</td><td>${mtpCell(r.mtp_pct)}</td></tr>`).join("")
     :`<tr><td colspan="9" style="text-align:left" class="muted">none in window</td></tr>`;
+  $("reqn_note").textContent="showing "+(s.recent_requests?s.recent_requests.length:0)+" · newest first";
 
   $("log").innerHTML=(s.log&&s.log.length)?
     s.log.slice().reverse().map(ln=>{
@@ -1809,7 +1829,7 @@ function esc(s){return String(s==null?"":s).replace(/[&<>]/g,c=>({"&":"&amp;","<
 
 async function fetch_(){
   try{
-    const r=await fetch("/api/state?window="+win);
+    const _rn=$("reqn_sel");const r=await fetch("/api/state?window="+win+"&req="+(_rn?_rn.value:"30"));
     const s=await r.json();
     render(s);
   }catch(e){
@@ -1858,7 +1878,8 @@ function initSidebar(){
   buildSidebar();
   setTab(activeTab);
 }
-buildWins();initSidebar();fetch_();setInterval(fetch_,2000);
+function initReqN(){const el=$("reqn_sel");if(!el)return;const s=localStorage.getItem("reqn");if(s)el.value=s;el.onchange=()=>{localStorage.setItem("reqn",el.value);fetch_();};}
+buildWins();initSidebar();initReqN();fetch_();setInterval(fetch_,2000);
 </script>
 </body>
 </html>
