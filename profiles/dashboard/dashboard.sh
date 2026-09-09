@@ -15,6 +15,8 @@ LOGFILE="$RUN_DIR/.local-ai-dash.log"
 
 alive() { [ -n "${1:-}" ] && kill -0 "$1" 2>/dev/null; }
 
+kill_tree() { local p=$1; kill "$p" 2>/dev/null; sleep 0.5; kill -9 "$p" 2>/dev/null; }
+
 running_pid() {
   local p=""
   [ -f "$PIDFILE" ] && p="$(cat "$PIDFILE" 2>/dev/null || true)"
@@ -26,32 +28,10 @@ running_pid() {
   return 0
 }
 
-health() {
-  local code
-  code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 "http://127.0.0.1:$PORT/api/state?window=60" || echo 000)"
-  [ "$code" = "200" ]
-}
-
-stale_warn() {
-  local p; p="$(running_pid)"
-  [ -z "$p" ] && return 0
-  local mtime start et
-  mtime="$(stat -c %Y "$DIR/dashboard.py")"
-  et="$(ps -o etimes= -p "$p" 2>/dev/null | tr -d ' ')"
-  [ -n "$et" ] || return 0
-  start=$(( $(date +%s) - et ))
-  if [ "$mtime" -gt "$start" ]; then
-    echo "STALE CODE: dashboard.py was modified after pid $p started — run '$0 start' to load it" >&2
-  fi
-  return 0
-}
-
 stop() {
   local p; p="$(running_pid)"
   if [ -n "$p" ]; then
-    kill "$p" 2>/dev/null || true
-    sleep 0.5
-    kill -9 "$p" 2>/dev/null || true
+    kill_tree "$p"
     echo "stopped dashboard (pid $p)"
   else
     echo "dashboard not running"
@@ -62,9 +42,7 @@ stop() {
 start() {
   local old; old="$(running_pid)"
   if [ -n "$old" ]; then
-    kill "$old" 2>/dev/null || true
-    sleep 0.5
-    kill -9 "$old" 2>/dev/null || true
+    kill_tree "$old"
     echo "overwrote running dashboard (pid $old)"
   fi
   rm -f "$PIDFILE"
@@ -74,7 +52,9 @@ start() {
   sleep 0.8
   local np; np="$(cat "$PIDFILE" 2>/dev/null || true)"
   if alive "$np"; then
-    if health; then
+    local code
+    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 "http://127.0.0.1:$PORT/api/state?window=60" || echo 000)"
+    if [ "$code" = "200" ]; then
       echo "dashboard started: http://$BIND:$PORT/ (pid $np, log $LOGFILE)"
     else
       echo "dashboard is up but /api/state failed its health check; last log lines:" >&2
@@ -92,7 +72,14 @@ status() {
   local p; p="$(running_pid)"
   if [ -n "$p" ]; then
     echo "dashboard running (pid $p): http://localhost:$PORT/"
-    stale_warn
+    local mtime start et
+    mtime="$(stat -c %Y "$DIR/dashboard.py")"
+    et="$(ps -o etimes= -p "$p" 2>/dev/null | tr -d ' ')"
+    [ -n "$et" ] || return 0
+    start=$(( $(date +%s) - et ))
+    if [ "$mtime" -gt "$start" ]; then
+      echo "STALE CODE: dashboard.py was modified after pid $p started — run '$0 start' to load it" >&2
+    fi
   else
     echo "dashboard not running"
   fi

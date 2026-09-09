@@ -27,15 +27,6 @@ KNOWN_CONTAINERS=(vllm-qwen38 sglang-qwen38 ninfer-qwen38-27b)
 
 log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOG"; }
 
-container_for_engine() {
-  case "$1" in
-    vllm) echo "vllm-qwen38" ;;
-    sglang:*) echo "sglang-qwen38" ;;
-    ninfer) echo "ninfer-qwen38-27b" ;;
-    *) echo "vllm-qwen38" ;;
-  esac
-}
-
 start_engine() {
   local engine="$1"
   case "$engine" in
@@ -64,7 +55,12 @@ if [ "$used" -lt "$IDLE_MIB" ]; then
   if [ "$n" -ge "$IDLE_NEEDED" ]; then
     engine="$(cat "$LAST_ENGINE_FILE" 2>/dev/null || echo vllm)"
     [ -n "$engine" ] || engine="vllm"
-    name="$(container_for_engine "$engine")"
+    case "$engine" in
+      vllm) name="vllm-qwen38" ;;
+      sglang:*) name="sglang-qwen38" ;;
+      ninfer) name="ninfer-qwen38-27b" ;;
+      *) name="vllm-qwen38" ;;
+    esac
     log "GPU idle ${used}MiB for ${n}min (>=${IDLE_NEEDED}), starting $engine ($name)"
     if docker ps -a --format '{{.Names}}' | grep -qx "$name"; then
       docker start "$name" >> "$LOG" 2>&1

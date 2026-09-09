@@ -2,13 +2,9 @@
 # Qwen3.8-27B-NVFP4 - unsloth build - vLLM
 # ckpt (HF): unsloth/Qwen3.8-27B-NVFP4 (base: Qwen/Qwen3.8-27B)
 # refetch:   hf download unsloth/Qwen3.8-27B-NVFP4 --local-dir $HOME/data/models/qwen3.8-27b-nvfp4-unsloth
-#
-# draft (HF): z-lab/Qwen3.8-27B-DFlash2 (block-diffusion drafter, for SPEC_METHOD=dflash)
-# refetch:    HF_ENDPOINT=https://hf-mirror.com hf download z-lab/Qwen3.8-27B-DFlash2 \
-#               --local-dir $HOME/data/models/qwen3.8-27b-dflash2
 set -euo pipefail
 # load repo-root .env (gitignored) — real API key etc.
-_sdir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_sdir="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 if [ -f "$_sdir/../../.env" ]; then set -a; . "$_sdir/../../.env"; set +a; fi
 NAME=vllm-qwen38
 IMG=vllm/vllm-openai:v0.27.1
@@ -18,36 +14,7 @@ API_KEY="${API_KEY:-}"
 API_ARGS=()
 if [ -n "$API_KEY" ]; then API_ARGS+=(--api-key "$API_KEY"); fi
 
-SPEC_METHOD="${SPEC_METHOD:-mtp}"   # mtp (default) | dflash (BROKEN on vllm/vllm-openai:v0.27.1, see below)
-DFLASH_DIR="${DFLASH_DIR:-$HOME/data/models/qwen3.8-27b-dflash2}"
-DFLASH_NUM_SPEC="${DFLASH_NUM_SPEC:-8}"
-
-# Measured 2026-08-19: vllm/vllm-openai:v0.27.1 rejects the DFlash2 draft
-# checkpoint at startup -- pydantic ValidationError, "Model architectures
-# ['DFlash2DraftModel'] are not supported for now" (crash-loops under
-# --restart=always). Not a missing-weights problem; the draft arch just
-# isn't in this vLLM build's registry. Left switchable in case a future
-# vLLM image adds support -- don't flip the default back without re-testing.
-if [ "$SPEC_METHOD" = "dflash" ] && [ ! -d "$DFLASH_DIR" ]; then
-  echo "WARN: SPEC_METHOD=dflash but $DFLASH_DIR is missing -- falling back to mtp." >&2
-  echo "      download first: HF_ENDPOINT=https://hf-mirror.com hf download z-lab/Qwen3.8-27B-DFlash2 --local-dir $DFLASH_DIR" >&2
-  SPEC_METHOD=mtp
-fi
-
-DFLASH_MOUNT=()
-case "$SPEC_METHOD" in
-  dflash)
-    SPEC_CONFIG="{\"method\": \"dflash\", \"model\": \"/draft\", \"num_speculative_tokens\": ${DFLASH_NUM_SPEC}}"
-    DFLASH_MOUNT=(-v "$DFLASH_DIR":/draft:ro)
-    ;;
-  mtp)
-    SPEC_CONFIG='{"method": "mtp", "num_speculative_tokens": 2}'
-    ;;
-  *)
-    echo "unknown SPEC_METHOD: $SPEC_METHOD (expected dflash|mtp)" >&2
-    exit 1
-    ;;
-esac
+SPEC_CONFIG='{"method": "mtp", "num_speculative_tokens": 2}'
 
 start() {
   docker ps -a --format '{{.Names}}' | grep -qx "$NAME" && docker rm -f "$NAME" >/dev/null
@@ -57,7 +24,6 @@ start() {
     -e VLLM_USE_FLASHINFER_SAMPLER=1 \
     -e VLLM_NO_USAGE_STATS=1 \
     -v "$MODEL":/models \
-    "${DFLASH_MOUNT[@]}" \
     "$IMG" \
     /models \
     --served-model-name local \
@@ -74,10 +40,10 @@ start() {
     --enable-auto-tool-choice \
     --tool-call-parser qwen3_coder \
     --speculative-config "$SPEC_CONFIG"
-  echo "started: $NAME (port $PORT, auth=$([ -n "$API_KEY" ] && echo on || echo off), restart=always, spec=$SPEC_METHOD)"
+  echo "started: $NAME (port $PORT, auth=$([ -n "$API_KEY" ] && echo on || echo off), restart=always, spec=mtp)"
   echo "log:   bash $0 logs"
   echo "stop:  bash $0 stop"
-  _profiles_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  _profiles_dir="$(cd "$_sdir/.." && pwd)"
   echo "vllm" > "$_profiles_dir/watchdog/.last-engine" 2>/dev/null || true
   _dash="$_profiles_dir/dashboard/dashboard.sh"
   [ -f "$_dash" ] && bash "$_dash" start || true

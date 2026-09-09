@@ -17,10 +17,7 @@ F="${NINFER_LOG:-/home/rjman/ninfer-logs/requests.jsonl}"
 LOG="${ROTATE_LOG:-/home/rjman/.ninfer-log-rotate.log}"
 CAP="${CAP:-1073741824}"   # 1 GiB
 KEEP="${KEEP:-7}"          # newest archives to retain
-# Engine lifecycle hooks, overridable for testing. start suppresses the dashboard
-# restart that ninfer.sh start would otherwise trigger (see NINFER_NO_DASH).
-STOP_CMD="${STOP_CMD:-bash $NINFER_SH stop}"
-START_CMD="${START_CMD:-NINFER_NO_DASH=1 bash $NINFER_SH start}"
+# start suppresses the dashboard restart that ninfer.sh start would otherwise trigger (see NINFER_NO_DASH).
 
 say() { printf '%s %s\n' "$(date '+%F %T')" "$*" >>"$LOG" 2>/dev/null || true; }
 
@@ -38,11 +35,11 @@ if [ "$size" -lt "$CAP" ]; then
 fi
 
 say "rollover: $F is $size B (cap $CAP) -> stop / gzip / reset / start"
-eval "$STOP_CMD"
+bash "$NINFER_SH" stop
 ts="$(date +%Y%m%d-%H%M%S)"
 gzip -c "$F" > "$F.$ts.gz"
 : > "$F"                     # reset live to empty (safe: writer released by stop)
 # Prune old archives, keep the newest $KEEP.
 { ls -1t "$F".*.gz 2>/dev/null || true; } | tail -n +$((KEEP + 1)) | xargs -r rm -f
-eval "$START_CMD"
+NINFER_NO_DASH=1 bash "$NINFER_SH" start
 say "rollover done: archived $F.$ts.gz, live reset, engine restarted"

@@ -9,7 +9,7 @@
 # needs no companion file.
 set -euo pipefail
 # load repo-root .env (gitignored) — real API key etc.
-_sdir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_sdir="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 if [ -f "$_sdir/../../.env" ]; then set -a; . "$_sdir/../../.env"; set +a; fi
 
 CONTAINER=ninfer-ornith-35b-a3b
@@ -23,7 +23,6 @@ JSONL_DIR="${JSONL_DIR:-$HOME/ninfer-logs}"
 API_KEY="${API_KEY:-}"
 API_ARGS=()
 if [ -n "$API_KEY" ]; then API_ARGS+=(--api-key "$API_KEY"); fi
-MODEL_ID=local
 # ---- capacity model, recomputed from the artifact manifest ------------------
 # 40 text layers: 30 GDN (no KV) + 10 full attention (3,7,...,39), plus the
 # flat mtp layer's attention = 11 KV stores. Each is 2 kv_heads x head_dim 256
@@ -97,16 +96,14 @@ start() {
     "$IMAGE" ninfer-serve "$MODEL_FILE" \
     --host 0.0.0.0 --port ${PORT} --cors \
     --request-log-jsonl /reqlog/requests.jsonl \
-    "${API_ARGS[@]}" --model-id ${MODEL_ID} \
+    "${API_ARGS[@]}" --model-id local \
     --max-context ${MAX_CONTEXT} --kv-capacity ${KV_CAPACITY} --kv-dtype ${KV_DTYPE} \
     --max-concurrency ${MAX_CONCURRENCY} --pending-timeout-ms 90000 --host-kv-mib ${HOST_KV_MIB} \
     "${VISION_FLAG[@]}" \
     "${PRESERVE_FLAG[@]}" \
     --spec "$SPEC" --draft-tokens "$DRAFT_TOKENS" --lm-head-draft
   echo "started, tail logs with: $0 logs"
-  # resolve symlink first: when invoked via a symlink, BASH_SOURCE is the link
-  _self="$(readlink -f "${BASH_SOURCE[0]}")"
-  _profiles_dir="$(cd "$(dirname "$_self")/.." && pwd)"
+  _profiles_dir="$(cd "$_sdir/.." && pwd)"
   echo "ninfer" > "$_profiles_dir/watchdog/.last-engine" 2>/dev/null || true
   _dash="$_profiles_dir/dashboard/dashboard.sh"
   if [ "${NINFER_NO_DASH:-0}" != "1" ]; then

@@ -33,7 +33,6 @@ from urllib.parse import urlparse, parse_qs
 SERVED = [("vllm-qwen38", "vllm"), ("sglang-qwen38", "sglang"), ("ninfer-qwen38-27b", "ninfer"), ("ninfer-ornith-35b-a3b", "ninfer")]
 SERVED_NAMES = {n for n, _ in SERVED}
 SERVED_FW = dict(SERVED)
-SERVE_API_PORT = 8020   # OpenAI endpoint all profiles expose
 # Fallback device KV pool (tokens) for the estimated KV-occupancy gauge, used only
 # when the engine's boot log can't be read; the live value is captured per container
 # boot from `kv_capacity_tokens=` into st.kv_total (see kv_capacity_tokens()).
@@ -63,10 +62,6 @@ def _num(s):
     if not m:
         return None
     return float(m.group(1)) * {"k": 1e3, "M": 1e6}.get(m.group(2), 1.0)
-
-
-def _f(s):
-    return _num(s)
 
 
 def _i(s):
@@ -173,9 +168,9 @@ def _ninfer_tp(t, fields):
         label = p[0]
         val = p[1] if len(p) > 1 else ""
         if label == "prefill":
-            ev["prefill"] = _f(val)
+            ev["prefill"] = _num(val)
         elif label == "decode":
-            ev["decode"] = _f(val)
+            ev["decode"] = _num(val)
         elif label == "running":
             ev["running"] = _i(val)
             m = re.search(r"\(([^)]*)\)", val)
@@ -191,7 +186,7 @@ def _ninfer_tp(t, fields):
         elif label == "waiting":
             ev["waiting"] = _i(val)
         elif label == "batch":
-            ev["avg_decode_batch"] = _f(val)
+            ev["avg_decode_batch"] = _num(val)
     return ev
 
 
@@ -224,11 +219,11 @@ def _ninfer_done(t, rid, fields):
         elif label == "total":
             ev["wall"] = _dur(val)
         elif label in ("prefill", "decode"):
-            ev[label] = _f(val)
+            ev[label] = _num(val)
         elif label in ("mtp", "dflash2"):
             m = re.match(r"accepted\s+([\d,]+)/([\d,]+)\s*\(([\d.]+)%\)", val)
             if m:
-                ev["mtp_pct"] = _f(m.group(3))
+                ev["mtp_pct"] = _num(m.group(3))
     return ev
 
 
@@ -263,16 +258,16 @@ def parse_vllm(line):
     t = _line_ts(line)
     if "Avg prompt throughput" in line:
         return {"kind": "tp", "t": t,
-                "prefill": _f(_after(line, "Avg prompt throughput:")),
-                "decode": _f(_after(line, "Avg generation throughput:")),
+                "prefill": _num(_after(line, "Avg prompt throughput:")),
+                "decode": _num(_after(line, "Avg generation throughput:")),
                 "running": _i(_after(line, "Running:")),
                 "waiting": _i(_after(line, "Waiting:"))}
     if "SpecDecoding metrics" in line:
         return {"kind": "sd", "t": t,
-                "acc_len": _f(_after(line, "Mean acceptance length:")),
-                "acc_rate": _f(_after(line, "Avg Draft acceptance rate:")),
-                "acc_thr": _f(_after(line, "Accepted throughput:")),
-                "draft_thr": _f(_after(line, "Drafted throughput:"))}
+                "acc_len": _num(_after(line, "Mean acceptance length:")),
+                "acc_rate": _num(_after(line, "Avg Draft acceptance rate:")),
+                "acc_thr": _num(_after(line, "Accepted throughput:")),
+                "draft_thr": _num(_after(line, "Drafted throughput:"))}
     return None
 
 
@@ -309,8 +304,8 @@ def gpu_stat():
             return None
         u, mu, mt, pw, pl, tc, fan = (x.strip() for x in out.split(",")[:7])
         return {"util": _i(u), "mem_used": _i(mu), "mem_total": _i(mt),
-                "power_w": _f(pw), "power_limit_w": _f(pl),
-                "temp_c": _f(tc), "fan_pct": _i(fan), "ts": time.time()}
+                "power_w": _num(pw), "power_limit_w": _num(pl),
+                "temp_c": _num(tc), "fan_pct": _i(fan), "ts": time.time()}
     except Exception:
         return None
 
@@ -537,6 +532,7 @@ def init_db(path=DB_PATH):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     conn = sqlite3.connect(path, check_same_thread=False)
     conn.execute("PRAGMA journal_mode=WAL")
+    # ponytail: metrics.db may still carry legacy status/code/mtp_round cols; drop via ALTER when convenient
     conn.executescript("""
     CREATE TABLE IF NOT EXISTS throughput(
       fp TEXT, ts REAL, container TEXT, framework TEXT,
@@ -545,10 +541,10 @@ def init_db(path=DB_PATH):
       avg_decode_batch REAL);
     CREATE TABLE IF NOT EXISTS requests(
       fp TEXT, ts REAL, container TEXT, framework TEXT, req TEXT, kind TEXT,
-      proto TEXT, stream INTEGER, finish TEXT, status INTEGER, code TEXT, msg TEXT,
+      proto TEXT, stream INTEGER, finish TEXT, msg TEXT,
       prompt INTEGER, gen INTEGER, cache INTEGER, reuse TEXT,
       ttft_ms REAL, prefill REAL, decode REAL, wall REAL,
-      mtp_round REAL, mtp_pct REAL);
+      mtp_pct REAL);
     CREATE INDEX IF NOT EXISTS idx_tp_ts ON throughput(ts);
     CREATE INDEX IF NOT EXISTS idx_req_ts ON requests(ts);
     CREATE UNIQUE INDEX IF NOT EXISTS uq_tp_fp ON throughput(fp);
@@ -576,7 +572,7 @@ def record(conn, container, framework, evs):
     the docker call). INSERT OR IGNORE on the line fingerprint keeps restart
     tail-backfills from double-counting."""
     tps = [(ln, e) for ln, e in evs if e["kind"] == "tp"]
-    rqs = [(ln, e) for ln, e in evs if e["kind"] in ("sub", "done", "err", "rej")]
+    rqs = [(ln, e) for ln, e in evs if e["kind"] in ("sub", "done", "err")]
     try:
         if tps:
             conn.executemany(
@@ -585,16 +581,16 @@ def record(conn, container, framework, evs):
                   e.get("running"), e.get("prefilling"), e.get("decode_ready"),
                   e.get("waiting"), e.get("avg_decode_batch")) for ln, e in tps])
         if rqs:
-            cols = "fp,ts,container,framework,req,kind,proto,stream,finish,status,code,msg,prompt,gen,cache,reuse,ttft_ms,prefill,decode,wall,mtp_round,mtp_pct"
+            cols = "fp,ts,container,framework,req,kind,proto,stream,finish,msg,prompt,gen,cache,reuse,ttft_ms,prefill,decode,wall,mtp_pct"
             ph = ",".join("?" for _ in cols.split(","))
             conn.executemany(
                 f"INSERT OR IGNORE INTO requests({cols}) VALUES({ph})",
                 [(_fp(ln), e["t"], container, framework, e.get("req"), e["kind"], e.get("proto"),
                   (1 if e.get("stream") else 0) if e.get("stream") is not None else None,
-                  e.get("finish"), e.get("status"), e.get("code"), e.get("msg"),
+                  e.get("finish"), e.get("msg"),
                   e.get("prompt"), e.get("gen"), e.get("cache"), e.get("reuse"),
                   e.get("ttft_ms"), e.get("prefill"), e.get("decode"), e.get("wall"),
-                  e.get("mtp_round"), e.get("mtp_pct")) for ln, e in rqs])
+                  e.get("mtp_pct")) for ln, e in rqs])
         conn.commit()
     except sqlite3.Error:
         try:
@@ -698,25 +694,6 @@ def _pct(vals, p):
     return round(s[f] + (s[c] - s[f]) * (k - f), 1)
 
 
-def _downsample(pts, buckets=140):
-    """Keep the last point per time bucket -> a light polyline for the chart."""
-    if not pts:
-        return []
-    t0, t1 = pts[0][0], pts[-1][0]
-    if t1 <= t0:
-        return [[round(t0, 3), pts[0][1], pts[0][2]]]
-    step = (t1 - t0) / buckets
-    out = []
-    for i in range(buckets):
-        lo, hi = t0 + i * step, t0 + (i + 1) * step
-        for p in pts:
-            if lo <= p[0] < hi:
-                out.append([round(p[0], 3), p[1], p[2]])
-    if not out or out[-1][0] != round(t1, 3):
-        out.append([round(t1, 3), pts[-1][1], pts[-1][2]])
-    return out
-
-
 def _downsample_series(pts, buckets=140):
     """Per-bucket last point, arbitrary tuple width -> light polyline set."""
     if not pts:
@@ -770,7 +747,7 @@ def build_state(st, window, conn):
         # long windows come from the DB and are aggregated to a light polyline so
         # the 12h span doesn't ship thousands of raw points to the client
         _pts = [(s["t"], s["decode"] or 0, s["prefill"] or 0) for s in tp_win]
-        series = _downsample_series(_pts) if from_db else _downsample(_pts)
+        series = _downsample_series(_pts)
 
         dec = [s["decode"] for s in tp_win]
         pre = [s["prefill"] for s in tp_win]
@@ -935,7 +912,7 @@ def build_state(st, window, conn):
     thermal = {
         "now": ({"gpu_c": t_now[1], "cpu_c": t_now[2], "gpu_w": t_now[3],
                  "fan_pct": t_now[4]} if t_now else {}),
-        "series": _downsample(therm_win),
+        "series": _downsample_series(therm_win),
         "max_gpu": round(max(g_max), 1) if g_max else None,
         "max_cpu": round(max(c_max), 1) if c_max else None,
     }
@@ -994,24 +971,6 @@ class Handler(BaseHTTPRequestHandler):
                 window = self.window_default
             window = max(10, min(86400, window))
             self._send(200, json.dumps(build_state(self.store, window, self.conn)), "application/json")
-        elif u.path == "/api/history":
-            try:
-                limit = max(1, min(5000, int(q.get("limit", [200])[0])))
-            except (ValueError, TypeError):
-                limit = 200
-            conn = self.conn
-            rows = []
-            if conn is not None:
-                try:
-                    rows = conn.execute(
-                        "SELECT ts,container,req,kind,finish,prompt,gen,ttft_ms,wall,mtp_pct "
-                        "FROM requests ORDER BY ts DESC LIMIT ?", (limit,)).fetchall()
-                except sqlite3.Error:
-                    rows = []
-            out = [{"ts": r[0], "container": r[1], "req": r[2], "kind": r[3], "finish": r[4],
-                    "prompt": r[5], "gen": r[6], "ttft_ms": r[7], "wall": r[8], "mtp_pct": r[9]}
-                   for r in rows]
-            self._send(200, json.dumps({"count": len(out), "requests": out}), "application/json")
         else:
             self._send(404, "not found", "text/plain")
 
@@ -1445,29 +1404,25 @@ function prep(c,H){
   const x=c.getContext("2d");x.setTransform(dpr,0,0,dpr,0,0);x.clearRect(0,0,W,H);
   return [x,W,H];
 }
-function drawSpark(id,vals,color){
+function drawSpark(id,vals,color,scale100=false){
   const c=$(id);if(!c||!c.clientWidth)return;
   const H=c.clientHeight;if(!H)return;
   const [x,W]=prep(c,H);
   const v=vals.filter(n=>n!=null);if(v.length<2)return;
-  const mn=Math.min(...v),mx=Math.max(...v),rng=(mx-mn)||1;
-  const P=vals.map((n,i)=>[i/(vals.length-1)*(W-2)+1,H-2-(((n==null?mn:n)-mn)/rng)*(H-4)]);
+  let P,tip;
+  if(scale100){
+    P=vals.map((n,i)=>[i/(vals.length-1)*(W-2)+1,H-2-((n==null?0:n)/100)*(H-4)]);
+    x.strokeStyle=C.grid;x.beginPath();x.moveTo(0,H-2);x.lineTo(W,H-2);x.stroke();
+    tip=i=>Math.round(vals[i]==null?0:vals[i])+"%";
+  }else{
+    const mn=Math.min(...v),mx=Math.max(...v),rng=(mx-mn)||1;
+    P=vals.map((n,i)=>[i/(vals.length-1)*(W-2)+1,H-2-(((n==null?mn:n)-mn)/rng)*(H-4)]);
+    tip=i=>fmt(vals[i]);
+  }
   const g=x.createLinearGradient(0,0,0,H);g.addColorStop(0,hexA(color,.42));g.addColorStop(1,hexA(color,0));
   x.beginPath();smoothPath(x,P);x.lineTo(P[P.length-1][0],H);x.lineTo(P[0][0],H);x.closePath();x.fillStyle=g;x.fill();
   x.beginPath();smoothPath(x,P);x.strokeStyle=color;x.lineWidth=1.5;x.lineJoin='round';x.lineCap='round';x.stroke();
-  c._pts=P.map((q,i)=>({x:q[0],y:q[1],html:fmt(vals[i])}));bindTip(c,"dist");
-}
-function drawSpark100(id,vals,color){
-  const c=$(id);if(!c||!c.clientWidth)return;
-  const H=c.clientHeight;if(!H)return;
-  const [x,W]=prep(c,H);
-  const v=vals.filter(n=>n!=null);if(v.length<2)return;
-  const P=vals.map((n,i)=>[i/(vals.length-1)*(W-2)+1,H-2-((n==null?0:n)/100)*(H-4)]);
-  x.strokeStyle=C.grid;x.beginPath();x.moveTo(0,H-2);x.lineTo(W,H-2);x.stroke();
-  const g=x.createLinearGradient(0,0,0,H);g.addColorStop(0,hexA(color,.42));g.addColorStop(1,hexA(color,0));
-  x.beginPath();smoothPath(x,P);x.lineTo(P[P.length-1][0],H);x.lineTo(P[0][0],H);x.closePath();x.fillStyle=g;x.fill();
-  x.beginPath();smoothPath(x,P);x.strokeStyle=color;x.lineWidth=1.5;x.lineJoin='round';x.lineCap='round';x.stroke();
-  c._pts=P.map((q,i)=>({x:q[0],y:q[1],html:Math.round(vals[i]==null?0:vals[i])+"%"}));bindTip(c,"dist");
+  c._pts=P.map((q,i)=>({x:q[0],y:q[1],html:tip(i)}));bindTip(c,"dist");
 }
 
 function buildWins(){
@@ -1766,7 +1721,7 @@ function render(s){
   const gser=(G.series||[]).map(p=>p[1]).filter(v=>v!=null);
   if(gser.length){
     $("gpu_avg").textContent="avg "+Math.round(gser.reduce((a,b)=>a+b,0)/gser.length)+"% · "+gser.length+"s";
-    drawSpark100("gpu_spark",gser.slice(-120),C.dec);
+    drawSpark("gpu_spark",gser.slice(-120),C.dec,true);
   }else{
     $("gpu_avg").textContent="-";$("gpu_spark")&&$("gpu_spark").getContext&&$("gpu_spark").getContext("2d").clearRect(0,0,500,500);
   }
@@ -1848,7 +1803,7 @@ function render(s){
   }
   $("wl_note").textContent=WL.stale_s==null?"":("last event "+Math.round(WL.stale_s)+"s ago"+(WL.stale_s>30?" · stale":""));
   const wser=(WL.series||[]).map(p=>p[0]==null?null:p[0]*100).filter(v=>v!=null);
-  if(wser.length)drawSpark100("wl_spark",wser.slice(-120),C.dec);
+  if(wser.length)drawSpark("wl_spark",wser.slice(-120),C.dec,true);
 }
 function esc(s){return String(s==null?"":s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));}
 
@@ -1887,9 +1842,9 @@ function drawTab(key){
   else if(key==="capacity"){
     const A=s.analysis||{};drawHistogram(A.ctx_hist||[]);drawScatter(A.scatter||[]);
     const gser=((s.gpu||{}).series||[]).map(p=>p[1]).filter(v=>v!=null);
-    if(gser.length)drawSpark100("gpu_spark",gser.slice(-120),C.dec);
+    if(gser.length)drawSpark("gpu_spark",gser.slice(-120),C.dec,true);
     const wser=((s.workload||{}).series||[]).map(p=>p[0]==null?null:p[0]*100).filter(v=>v!=null);
-    if(wser.length)drawSpark100("wl_spark",wser.slice(-120),C.dec);
+    if(wser.length)drawSpark("wl_spark",wser.slice(-120),C.dec,true);
   }
   else if(key==="therm")drawTherm((s.thermal||{}).series,win,s.server.now);
 }

@@ -4,7 +4,7 @@
 # refetch:   hf download neroued/Qwen3.8-27B-nvfp4-NInfer --local-dir $HOME/models/ninfer/Qwen3.8-27B-nvfp4-NInfer
 set -euo pipefail
 # load repo-root .env (gitignored) — real API key etc.
-_sdir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_sdir="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 if [ -f "$_sdir/../../.env" ]; then set -a; . "$_sdir/../../.env"; set +a; fi
 
 CONTAINER=ninfer-qwen38-27b
@@ -19,7 +19,6 @@ JSONL_DIR="${JSONL_DIR:-$HOME/ninfer-logs}"
 API_KEY="${API_KEY:-}"
 API_ARGS=()
 if [ -n "$API_KEY" ]; then API_ARGS+=(--api-key "$API_KEY"); fi
-MODEL_ID=local
 # nvfp4 (4-bit group-16) | k8v4 (K fp8 + V nvfp4) | fp8 (E4M3 row-256) | int8 (group-64) | bf16
 # Bytes per token per head (K+V): nvfp4 288, k8v4 402, fp8 516, int8 528, bf16 1024.
 # nvfp4 is the default for pool capacity, not speed: decode is only ~5% faster
@@ -165,17 +164,14 @@ start() {
     "$IMAGE" ninfer-serve "$MODEL_FILE" \
     --host 0.0.0.0 --port ${PORT} --cors \
     --request-log-jsonl /reqlog/requests.jsonl \
-    "${API_ARGS[@]}" --model-id ${MODEL_ID} \
+    "${API_ARGS[@]}" --model-id local \
     --max-context ${MAX_CONTEXT} --kv-capacity ${KV_CAPACITY:-auto} --kv-dtype ${KV_DTYPE} \
     --max-concurrency ${MAX_CONCURRENCY} --pending-timeout-ms 90000 --host-kv-mib ${HOST_KV_MIB} \
     "${VISION_FLAG[@]}" \
     "${PRESERVE_FLAG[@]}" \
     --spec "$SPEC" --draft-tokens "$DRAFT_TOKENS" --lm-head-draft
   echo "started, tail logs with: $0 logs"
-  # resolve symlink first: when invoked via a symlink (e.g. ~/.local/bin/start-ninfer.sh),
-  # BASH_SOURCE is the link itself, so dirname/.. would mis-resolve away from profiles/
-  _self="$(readlink -f "${BASH_SOURCE[0]}")"
-  _profiles_dir="$(cd "$(dirname "$_self")/.." && pwd)"
+  _profiles_dir="$(cd "$_sdir/.." && pwd)"
   echo "ninfer" > "$_profiles_dir/watchdog/.last-engine" 2>/dev/null || true
   _dash="$_profiles_dir/dashboard/dashboard.sh"
   if [ "${NINFER_NO_DASH:-0}" != "1" ]; then
