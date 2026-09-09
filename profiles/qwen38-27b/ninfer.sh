@@ -166,10 +166,15 @@ start() {
     --request-log-jsonl /reqlog/requests.jsonl \
     "${API_ARGS[@]}" --model-id local \
     --max-context ${MAX_CONTEXT} --kv-capacity ${KV_CAPACITY:-auto} --kv-dtype ${KV_DTYPE} \
-    --max-concurrency ${MAX_CONCURRENCY} --pending-timeout-ms 90000 --host-kv-mib ${HOST_KV_MIB} \
+    --max-concurrency ${MAX_CONCURRENCY} --host-kv-mib ${HOST_KV_MIB} \
     "${VISION_FLAG[@]}" \
     "${PRESERVE_FLAG[@]}" \
-    --spec "$SPEC" --draft-tokens "$DRAFT_TOKENS" --lm-head-draft
+    --spec "$SPEC" --draft-tokens "$DRAFT_TOKENS" --lm-head-draft \
+    --pending-timeout-ms 90000 \
+    --default-max-tokens 20480 \
+    --default-thinking-budget 4096 \
+    --prefill-chunk 4096 \
+    --log-stats-interval-ms 2000
   echo "started, tail logs with: $0 logs"
   _profiles_dir="$(cd "$_sdir/.." && pwd)"
   echo "ninfer" > "$_profiles_dir/watchdog/.last-engine" 2>/dev/null || true
