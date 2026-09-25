@@ -43,22 +43,25 @@ if [ -n "$API_KEY" ]; then API_ARGS+=(--api-key "$API_KEY"); fi
 # weights 20.4 GiB, ready in 19.8s, ~435 decode TPS on a 200-token Chinese chat).
 # Engine validates reservations at startup and exits clean, so raising anything
 # here is safe to try.
+# ---- capacity: `start` (full) vs `start lite` -------------------------
+# Lite flips VRAM down with ONE reliable lever: max_concurrency 2. The device-
+# side bytes you can move — KV-runtime + device-state reservation — scale with
+# concurrency (this artifact measured ~9.5 -> ~2.3 GiB, ~5 GiB here, pulling
+# total 30.5 -> ~25.4 GiB). Host-KV RAM, vision, weights and the full 262144
+# context ceiling stay untouched, so long contexts remain resident in RAM. Env
+# var wins over either profile value. NB avoid ctx==131072 everywhere: the
+# engine's allocator wedges there regardless of concurrency (65536/262144 ok).
+profile="${2:-full}"
+[ "$profile" = "lite" ] || profile="full"
 KV_DTYPE="${KV_DTYPE:-nvfp4}"
 MAX_CONTEXT="${MAX_CONTEXT:-262144}"
+if [ "$profile" = "lite" ]; then
+  MAX_CONCURRENCY="${MAX_CONCURRENCY:-1}"
+else
+  MAX_CONCURRENCY="${MAX_CONCURRENCY:-4}"
+fi
 KV_CAPACITY="${KV_CAPACITY:-auto}"
-# 8 host state slots (engine constant) x a max-length 1.52 GiB session needs
-# ~12.2 GiB pinned; 16 GiB covers it with margin. Keep total Shmem < ~40 GiB
-# on this 62.5 GiB box (zram swap makes it unreclaimable).
 HOST_KV_MIB="${HOST_KV_MIB:-16384}"
-# max_concurrency stays at 4 (hard limit [1,8]; device_state_slots tracks it,
-# so raising it costs VRAM twice and shrinks the pool). All context-cache
-# capacity flags stay at engine defaults — every override tried on this box
-# made TTFT worse (see qwen38-27b/ninfer.sh header + skill: issue #144).
-# max_shared_prefixes deliberately NOT passed: = max_concurrency (4) is the
-# engine default; the msp=0 wedge dodge was a confirmed misattribution.
-MAX_CONCURRENCY="${MAX_CONCURRENCY:-4}"
-# Override per-run without editing (fish login shell: use env):
-#   env VISION=0 bash ninfer.sh start
 VISION="${VISION:-1}"
 VISION_FLAG=(--vision)
 if [ "$VISION" = 0 ]; then VISION_FLAG=(); fi
@@ -87,7 +90,7 @@ start() {
   docker stop sglang-qwen38 >/dev/null 2>&1 || true
   docker stop vllm-qwen38 >/dev/null 2>&1 || true
   docker rm -f ninfer-qwen38-27b >/dev/null 2>&1 || true
-  echo "vision=$VISION  max-context=$MAX_CONTEXT  kv-dtype=$KV_DTYPE"
+  echo "$profile: vision=$VISION  concurrency=$MAX_CONCURRENCY  host-kv-mib=$HOST_KV_MIB  ctx=$MAX_CONTEXT  kv-dtype=$KV_DTYPE"
   docker run -d --name "$CONTAINER" --restart unless-stopped \
     --runtime=nvidia --gpus all \
     -p ${PORT}:${PORT} \
@@ -135,5 +138,5 @@ case "$action" in
   stop) stop ;;
   status) status ;;
   logs) logs ;;
-  *) echo "usage: $0 {start|stop|status|logs}"; exit 1 ;;
+  *) echo "usage: $0 {start[lite]|stop|status|logs}"; exit 1 ;;
 esac

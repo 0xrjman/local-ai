@@ -69,12 +69,29 @@ HOST_KV_MIB="${HOST_KV_MIB:-16384}"
 # Expect the occasional single-request HTTP 500 rather than a dead process. Watch the JSONL for
 # error.message == "materialization source has no resident state"; set this back to 0 if the rate
 # is material.
-MAX_CONCURRENCY="${MAX_CONCURRENCY:-4}"
-# Keep this at 4. device_state_slots defaults to MAX_CONCURRENCY and total
-# device StateImage slots = MAX_CONCURRENCY + device_state_slots at ~147 MiB
-# each, so raising concurrency costs VRAM twice over and shrinks the device KV
-# pool: measured kv_capacity 410944 tokens at 4 against 359744 at 8. Engine
-# hard limit is [1,8] (engine.cpp:39-40).
+# ---- capacity: `start` (full) vs `start lite` -------------------------
+# Lite cuts footprint with TWO levers:
+#   1. max_concurrency 1 — the movable VRAM is the device-side paged KV cache +
+#      device-state slots, both scaling with concurrency (35B cell measured
+#      ~9.5 -> ~2.3 GiB going 4->2; 1 cuts further).
+#   2. SPEC=mtp — drops dflash2's ~2.07 GiB standalone draft model (mtp head is
+#      in-artifact, no extra VRAM); this also frees pool: mtp:1:nvfp4 gives
+#      410,944-token device pool vs dflash2's 188,416.
+# Vision, weights, host-KV RAM and the context ceiling stay at max; long
+# contexts remain resident in RAM. Env var wins over either profile value
+# (e.g. `env MAX_CONCURRENCY=4 start lite`, `env SPEC=dflash2 start lite`).
+profile="${2:-full}"
+[ "$profile" = "lite" ] || profile="full"
+if [ "$profile" = "lite" ]; then
+  MAX_CONCURRENCY="${MAX_CONCURRENCY:-1}"
+  SPEC="${SPEC:-mtp}"
+else
+  MAX_CONCURRENCY="${MAX_CONCURRENCY:-4}"
+  SPEC="${SPEC:-dflash2}"
+fi
+# device_state_slots defaults to MAX_CONCURRENCY; total device StateImage slots
+# = MAX_CONCURRENCY + device_state_slots at ~147 MiB each, so lowering it
+# shrinks the device KV pool and its reservation. Engine hard limit is [1,8].
 
 # ---- (VISION, KV_DTYPE) -> MAX_CONTEXT -----------------------------------
 # Override per-run without editing. The login shell here is fish, which has no
@@ -109,7 +126,7 @@ VISION="${VISION:-1}"
 # sequential, temp 0): decode within noise (mean 211.7 vs 203.7 tok/s, median
 # opposite) but acceptance consistently higher at 7 (35.8% vs 23.8%, 8/8
 # prompts) -- K=12's extra drafts rarely accept, wasted verification.
-SPEC="${SPEC:-dflash2}"
+# (default chosen by profile above: dflash2 full / mtp lite)
 case "$SPEC" in
   dflash2) DRAFT_TOKENS="${DRAFT_TOKENS:-7}" ;;
   mtp)     DRAFT_TOKENS="${DRAFT_TOKENS:-3}" ;;
@@ -155,7 +172,7 @@ start() {
   # pool, so no room for a second concurrent long request (short requests still
   # multiplex). MTP draft tokens share the pool; near the tail drafting may fall
   # back to plain decode (harmless, just loses spec speedup there).
-  echo "vision=$VISION  max-context=$MAX_CONTEXT"
+  echo "$profile: spec=$SPEC draft=$DRAFT_TOKENS  concurrency=$MAX_CONCURRENCY  vision=$VISION  max-context=$MAX_CONTEXT  kv-dtype=$KV_DTYPE"
   docker run -d --name "$CONTAINER" --restart unless-stopped \
     --runtime=nvidia --gpus all \
     -p ${PORT}:${PORT} \
@@ -204,5 +221,5 @@ case "$action" in
   stop) stop ;;
   status) status ;;
   logs) logs ;;
-  *) echo "usage: $0 {start|stop|status|logs}"; exit 1 ;;
+  *) echo "usage: $0 {start[lite]|stop|status|logs}"; exit 1 ;;
 esac
