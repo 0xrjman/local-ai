@@ -919,8 +919,10 @@ def build_state(st, window, conn, req_n=30):
     pre_vals = [p[2] for p in series]
     peak = max([max(dec_vals) if dec_vals else 0, max(pre_vals) if pre_vals else 0], default=0)
 
-    therm_win = [p for p in st.therm if p[0] >= now - window]
-    t_now = st.therm[-1] if st.therm else None
+    with st.lock:
+        _therm = list(st.therm)
+    therm_win = [p for p in _therm if p[0] >= now - window]
+    t_now = _therm[-1] if _therm else None
     g_max = [p[1] for p in therm_win if p[1] is not None]
     c_max = [p[2] for p in therm_win if p[2] is not None]
     thermal = {
